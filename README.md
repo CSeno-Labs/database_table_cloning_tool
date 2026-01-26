@@ -1,96 +1,83 @@
 # sync-db 🚀
 
-Uma ferramenta CLI em Python projetada para sincronizar tabelas específicas entre ambientes MySQL (ex: Produção para Localhost) de forma inteligente, segura e visual.
+**English** | [Português](#português)
+
+A professional CLI tool to synchronize specific MySQL tables between different environments (e.g., Production RDS to Localhost) with structure detection and progress visualization.
+
+## ✨ Key Features
+
+- **Smart Sync**: Automatically creates missing tables or adds new columns to existing ones.
+- **Visual Progress**: Real-time progress bars and status panels via `rich`.
+- **Memory Efficient**: Streams large data in chunks to save RAM.
+- **Global Access**: Command-line support to run from any directory.
+- **Centralized Config**: Manage credentials and aliases in a single `config.json`.
+
+## 🚀 Quick Start
+
+1. **Install dependencies**:
+   ```bash
+   pip install mysql-connector-python rich
+   ```
+2. **Configure `config.json`** with your source (`origem`) and destination (`destino`) credentials.
+3. **Run**:
+   ```bash
+   python sync-db.py
+   ```
+
+## 🛠️ CLI Arguments
+
+- `-t, --tables`: Sync specific tables (e.g., `-t user logs`).
+- `-f, --file`: Sync tables from a custom TXT/CSV file.
+- `-s, --showtables`: List identified tables without syncing (Dry run).
+- `-l, --logs`: Show the last 20 log entries.
+
+## 💻 Global Installation (Windows)
+
+To use `sinc-db` from any folder:
+1. Add the project folder path to your System **Environment Variables** (PATH).
+2. Open a new terminal and type:
+   ```bash
+   sinc-db -t table_name
+   ```
+
+---
+
+## Português
+
+Ferramenta CLI para sincronização inteligente de tabelas MySQL entre ambientes (ex: Produção para Local), com detecção de estrutura e progresso visual.
 
 ## ✨ Funcionalidades
 
-* **Sincronização Inteligente**: Detecta se a tabela existe no destino. Se não existir, cria a estrutura; se existir, verifica se há colunas novas na origem e as adiciona automaticamente.
-* **Interface Moderna**: Utiliza a biblioteca `rich` para exibir painéis, cores e barras de progresso reais durante a importação.
-* **Eficiência**: Processa arquivos grandes via streaming (chunks), economizando memória RAM.
-* **Logs Detalhados**: Histórico completo de operações salvo em arquivo.
-* **Configuração Centralizada**: Credenciais e preferências separadas em um arquivo `config.json`.
+- **Sincronização Inteligente**: Cria tabelas ausentes ou adiciona novas colunas automaticamente.
+- **Progresso Visual**: Barras de progresso e painéis coloridos via `rich`.
+- **Eficiência**: Processa grandes volumes de dados em pedaços (chunks).
+- **Acesso Global**: Suporte para execução via terminal em qualquer diretório.
+- **Configuração Central**: Credenciais e apelidos gerenciados no `config.json`.
 
-## 🛠️ Pré-requisitos
+## 🚀 Início Rápido
 
-1. **Python 3.10+** instalado.
-2. **MySQL Client** (mysqldump e mysql) instalado (geralmente via XAMPP ou instalação nativa).
-3. Dependências Python:
-
-```bash
+1. **Instale as dependências**:
+   ```bash
    pip install mysql-connector-python rich
    ```
+2. **Configure o `config.json`** com as credenciais de `origem` e `destino`.
+3. **Execute**:
+   ```bash
+   python sync-db.py
+   ```
 
-## ⚙️ Configuração
+## 🛠️ Argumentos CLI
 
-Edite o arquivo `config.json` na pasta raiz do projeto:
+- `-t, --tables`: Sincroniza tabelas específicas (ex: `-t usuario logs`).
+- `-f, --file`: Sincroniza tabelas de um arquivo TXT/CSV personalizado.
+- `-s, --showtables`: Apenas lista as tabelas (sem sincronizar).
+- `-l, --logs`: Exibe as últimas 20 entradas de log.
 
-```json
-{
-    "settings": {
-        "mysql\_bin\_path": "C:\\\\xampp\\\\mysql\\\\bin",
-        "default\_csv\_file": "tabelas\_puxar.csv",
-        "log\_file": "sincronizacao.log"
-    },
-    "origem": {
-        "alias": "PRODUÇÃO (RDS)",
-        "host": "seu-host.rds.amazonaws.com",
-        "user": "usuario",
-        "password": "senha",
-        "database": "nome\_db"
+## 💻 Instalação Global (Windows)
 
-&nbsp;	"charset": ""
-    },
-    "destino": {
-        "alias": "LOCAL (DEV)",
-        "host": "localhost",
-        "user": "root",
-        "password": "1",
-        "database": "nome\_db"
-
-&nbsp;	"charset": ""
-    }
-}
-```
-
-## 🚀 Como usar
-
-### Uso Básico
-
-Sincroniza as tabelas listadas no arquivo padrão (`tabelas\_puxar.csv`):
-
-```bash
-python sync-db.py
-```
-
-### Argumentos de Linha de Comando
-
-Você pode passar tabelas específicas ou arquivos personalizados:
-
-* **Tabelas manuais**: `python sync-db.py -t aluno escola lotacao`
-* **Arquivo personalizado**: `python sync-db.py -f tabelas\_especificas.txt`
-* **Apenas visualizar (Dry Run)**: `python sync-db.py -s` (Mostra quais tabelas seriam afetadas)
-* **Ver Logs**: `python sync-db.py -l` (Mostra as últimas 20 entradas do log)
-
----
-
-## 💻 Configurando o Comando Global (Windows)
-
-Para rodar o `sync-db` de qualquer pasta no seu computador:
-
-1. Na pasta do projeto, você encontrará o arquivo `sinc-db.bat`.
-2. Abra o menu Iniciar e digite **"Variáveis de ambiente"**.
-3. Selecione **"Editar as variáveis de ambiente do sistema"**.
-4. Clique em **Variáveis de Ambiente** > **Variáveis do Sistema** > selecione **Path** e clique em **Editar**.
-5. Clique em **Novo** e cole o caminho completo da pasta onde está o arquivo `sinc-db.bat`.
-6. Reinicie seu terminal.
-
-Agora você pode usar o comando abaixo de qualquer diretório:
-
-```bash
-sinc-db -t minha\_tabela
-```
-
----
-
-*Desenvolvido por S\_Neto99*
-
+Para usar o comando `sinc-db` em qualquer pasta:
+1. Adicione o caminho da pasta do projeto às **Variáveis de Ambiente** (PATH) do Sistema.
+2. Abra um novo terminal e digite:
+   ```bash
+   sinc-db -t nome_da_tabela
+   ```
