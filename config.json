@@ -1,0 +1,25 @@
+{
+    "settings": {
+        "mysql_bin_path": "C:\\xampp\\mysql\\bin",
+        "default_csv_file": "tabelas_puxar.csv",
+        "log_file": "sincronizacao.log"
+    },
+    "origem": {
+        "alias": "PROD",
+        "host": "",
+        "user": "",
+        "password": "",
+        "database": "",
+        "port": 3306,
+        "charset": ""
+    },
+    "destino": {
+        "alias": "DEV",
+        "host": "localhost",
+        "user": "root",
+        "password": "1",
+        "database": "",
+        "port": 3306,
+        "charset": ""
+    }
+}
