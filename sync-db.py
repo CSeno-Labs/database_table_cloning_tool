@@ -22,7 +22,12 @@ def load_config():
         # Template padrão caso o arquivo suma
         default_config = {
             "settings": {
+                "mysql_client": "local",
                 "mysql_bin_path": r"C:\\xampp\\mysql\\bin",
+                "docker_container": "mysql",
+                "docker_mysql_bin": "/usr/bin",
+                "docker_mysql_cmd": "mysql",
+                "docker_mysqldump_cmd": "mysqldump",
                 "default_csv_file": "tabelas_puxar.csv",
                 "log_file": "sincronizacao.log"
             },
@@ -39,7 +44,13 @@ def load_config():
 CONFIG = load_config()
 
 # Atalhos para facilidade
-MYSQL_BIN_PATH = CONFIG["settings"]["mysql_bin_path"]
+MYSQL_CLIENT = CONFIG["settings"].get("mysql_client", "local").lower()
+MYSQL_BIN_PATH = CONFIG["settings"].get("mysql_bin_path", r"C:\\xampp\\mysql\\bin")
+DOCKER_CONTAINER = CONFIG["settings"].get("docker_container", "mysql")
+DOCKER_MYSQL_BIN = CONFIG["settings"].get("docker_mysql_bin", "/usr/bin")
+DOCKER_MYSQL_CMD = CONFIG["settings"].get("docker_mysql_cmd", "mysql")
+DOCKER_MYSQLDUMP_CMD = CONFIG["settings"].get("docker_mysqldump_cmd", "mysqldump")
+
 MYSQLDUMP_EXE = os.path.join(MYSQL_BIN_PATH, "mysqldump.exe")
 MYSQL_EXE = os.path.join(MYSQL_BIN_PATH, "mysql.exe")
 
@@ -199,6 +210,47 @@ def sync_structure(table):
         log_error(f"Falha ao alterar estrutura: {err}")
         return False, False
 
+def build_dump_cmd(needs_creation, table):
+    if MYSQL_CLIENT == "docker":
+        mysqldump = f"{DOCKER_MYSQL_BIN}/{DOCKER_MYSQLDUMP_CMD}"
+        cmd = ["docker", "exec", "-i", DOCKER_CONTAINER, mysqldump]
+    else:
+        cmd = [MYSQLDUMP_EXE]
+
+    cmd.extend(["-h", ORIGEM_CONFIG['host'], "-u", ORIGEM_CONFIG['user'], f"-p{ORIGEM_CONFIG['password']}"])
+    if not needs_creation: cmd.append("--no-create-info")
+    cmd.extend([
+        "--complete-insert", "--skip-add-locks", "--skip-comments",
+        "--single-transaction", "--quick", "--default-character-set=latin1",
+        ORIGEM_CONFIG['database'], table
+    ])
+    return cmd
+
+def build_import_cmd():
+    if MYSQL_CLIENT == "docker":
+        mysql = f"{DOCKER_MYSQL_BIN}/{DOCKER_MYSQL_CMD}"
+        cmd = ["docker", "exec", "-i", DOCKER_CONTAINER, mysql]
+    else:
+        cmd = [MYSQL_EXE]
+
+    cmd.extend([
+        "-h", DESTINO_CONFIG['host'], "-u", DESTINO_CONFIG['user'],
+        f"-p{DESTINO_CONFIG['password']}", "--default-character-set=latin1",
+        DESTINO_CONFIG['database']
+    ])
+    return cmd
+
+def validate_mysql_client():
+    if MYSQL_CLIENT == "docker":
+        return True
+    if not os.path.exists(MYSQLDUMP_EXE) or not os.path.exists(MYSQL_EXE):
+        log_error(
+            "Cliente MySQL local não encontrado. Verifique 'mysql_bin_path' "
+            "ou mude 'mysql_client' para 'docker' no config.json."
+        )
+        return False
+    return True
+
 def sync_data(table, needs_creation=False):
     temp_sql = f"temp_{table}.sql"
     header_sql = "SET FOREIGN_KEY_CHECKS=0;\nSET autocommit=0;\nSTART TRANSACTION;\n"
@@ -207,9 +259,7 @@ def sync_data(table, needs_creation=False):
     try:
         with open(temp_sql, "w", encoding='utf-8') as f: f.write(header_sql)
         
-        dump_cmd = [MYSQLDUMP_EXE, "-h", ORIGEM_CONFIG['host'], "-u", ORIGEM_CONFIG['user'], f"-p{ORIGEM_CONFIG['password']}"]
-        if not needs_creation: dump_cmd.append("--no-create-info")
-        dump_cmd.extend(["--complete-insert", "--skip-add-locks", "--skip-comments", "--single-transaction", "--quick", "--default-character-set=latin1", ORIGEM_CONFIG['database'], table])
+        dump_cmd = build_dump_cmd(needs_creation, table)
 
         # Dump
         if HAS_RICH:
@@ -224,7 +274,7 @@ def sync_data(table, needs_creation=False):
 
         # Import
         file_size = os.path.getsize(temp_sql)
-        import_cmd = [MYSQL_EXE, "-h", DESTINO_CONFIG['host'], "-u", DESTINO_CONFIG['user'], f"-p{DESTINO_CONFIG['password']}", "--default-character-set=latin1", DESTINO_CONFIG['database']]
+        import_cmd = build_import_cmd()
 
         if HAS_RICH:
             with subprocess.Popen(import_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
@@ -286,6 +336,8 @@ if __name__ == "__main__":
 
     os.system('cls' if os.name == 'nt' else 'clear')
     log_header(f"SINC: {ORIGEM_CONFIG['alias']} ➔ {DESTINO_CONFIG['alias']}")
+    if not validate_mysql_client():
+        sys.exit(1)
 
     TABLES = []
     sources = []

@@ -1,6 +1,11 @@
 {
     "settings": {
+        "mysql_client": "local",
         "mysql_bin_path": "C:\\xampp\\mysql\\bin",
+        "docker_container": "mysql",
+        "docker_mysql_bin": "/usr/bin",
+        "docker_mysql_cmd": "mysql",
+        "docker_mysqldump_cmd": "mysqldump",
         "default_csv_file": "tabelas_puxar.csv",
         "log_file": "sincronizacao.log"
     },
