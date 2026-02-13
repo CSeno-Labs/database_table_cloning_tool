@@ -252,7 +252,8 @@ def validate_mysql_client():
     return True
 
 def sync_data(table, needs_creation=False):
-    temp_sql = f"temp_{table}.sql"
+    # Sempre grava o temporário na pasta do script para evitar erro de permissão no cwd.
+    temp_sql = os.path.join(SCRIPT_DIR, f"temp_{table}.sql")
     header_sql = "SET FOREIGN_KEY_CHECKS=0;\nSET autocommit=0;\nSTART TRANSACTION;\n"
     if not needs_creation: header_sql += f"DELETE FROM {table};\n"
         
