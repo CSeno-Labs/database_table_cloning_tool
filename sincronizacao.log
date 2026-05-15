@@ -1,0 +1,29 @@
+2026-05-15 11:16:13 | INFO | === SINC: PROD LEITURA ➔ Banco Local ===
+2026-05-15 11:16:13 | INFO | package: mysql.connector.plugins
+2026-05-15 11:16:13 | INFO | plugin_name: mysql_native_password
+2026-05-15 11:16:13 | INFO | AUTHENTICATION_PLUGIN_CLASS: MySQLNativePasswordAuthPlugin
+2026-05-15 11:16:13 | ERROR | Tabela 'tabela1' não encontrada na origem (PROD LEITURA).
+2026-05-15 11:16:13 | ERROR | Tabela 'tabela2' não encontrada na origem (PROD LEITURA).
+2026-05-15 11:16:13 | ERROR | Tabela 'tabela3' não encontrada na origem (PROD LEITURA).
+2026-05-15 11:16:14 | ERROR | Tabela 'tabela4' não encontrada na origem (PROD LEITURA).
+2026-05-15 11:16:14 | ERROR | Tabela 'tabela5' não encontrada na origem (PROD LEITURA).
+2026-05-15 11:16:34 | INFO | === SINC: PROD LEITURA ➔ Banco Local ===
+2026-05-15 11:16:34 | INFO | package: mysql.connector.plugins
+2026-05-15 11:16:34 | INFO | plugin_name: mysql_native_password
+2026-05-15 11:16:34 | INFO | AUTHENTICATION_PLUGIN_CLASS: MySQLNativePasswordAuthPlugin
+2026-05-15 11:16:34 | ERROR | Erro em periodo: [WinError 2] O sistema não pode encontrar o arquivo especificado
+2026-05-15 11:17:05 | INFO | === SINC: PROD LEITURA ➔ Banco Local ===
+2026-05-15 11:17:05 | INFO | package: mysql.connector.plugins
+2026-05-15 11:17:05 | INFO | plugin_name: mysql_native_password
+2026-05-15 11:17:05 | INFO | AUTHENTICATION_PLUGIN_CLASS: MySQLNativePasswordAuthPlugin
+2026-05-15 11:17:05 | ERROR | Erro em periodo: [WinError 2] O sistema não pode encontrar o arquivo especificado
+2026-05-15 11:17:12 | INFO | === SINC: PROD LEITURA ➔ Banco Local ===
+2026-05-15 11:17:12 | INFO | package: mysql.connector.plugins
+2026-05-15 11:17:12 | INFO | plugin_name: mysql_native_password
+2026-05-15 11:17:12 | INFO | AUTHENTICATION_PLUGIN_CLASS: MySQLNativePasswordAuthPlugin
+2026-05-15 11:17:12 | ERROR | Erro em periodo: [WinError 2] O sistema não pode encontrar o arquivo especificado
+2026-05-15 11:23:31 | INFO | === SINC: PROD LEITURA ➔ Banco Local ===
+2026-05-15 11:23:31 | INFO | package: mysql.connector.plugins
+2026-05-15 11:23:31 | INFO | plugin_name: mysql_native_password
+2026-05-15 11:23:31 | INFO | AUTHENTICATION_PLUGIN_CLASS: MySQLNativePasswordAuthPlugin
+2026-05-15 11:23:32 | INFO | SUCCESS: periodo sincronizada.

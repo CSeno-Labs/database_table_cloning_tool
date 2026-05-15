@@ -39,9 +39,20 @@ def load_config():
 CONFIG = load_config()
 
 # Atalhos para facilidade
-MYSQL_BIN_PATH = CONFIG["settings"]["mysql_bin_path"]
-MYSQLDUMP_EXE = os.path.join(MYSQL_BIN_PATH, "mysqldump.exe")
-MYSQL_EXE = os.path.join(MYSQL_BIN_PATH, "mysql.exe")
+SETTINGS = CONFIG["settings"]
+MYSQL_CLIENT = SETTINGS.get("mysql_client", "local")
+MYSQL_BIN_PATH = SETTINGS["mysql_bin_path"]
+
+if MYSQL_CLIENT == "docker":
+    _container  = SETTINGS["docker_container"]
+    _bin        = SETTINGS.get("docker_mysql_bin", "/usr/bin")
+    _dump_cmd   = SETTINGS.get("docker_mysqldump_cmd", "mysqldump")
+    _mysql_cmd  = SETTINGS.get("docker_mysql_cmd", "mysql")
+    MYSQLDUMP_BASE_CMD = ["docker", "exec", "-i", _container, f"{_bin}/{_dump_cmd}"]
+    MYSQL_BASE_CMD     = ["docker", "exec", "-i", _container, f"{_bin}/{_mysql_cmd}"]
+else:
+    MYSQLDUMP_BASE_CMD = [os.path.join(MYSQL_BIN_PATH, "mysqldump.exe")]
+    MYSQL_BASE_CMD     = [os.path.join(MYSQL_BIN_PATH, "mysql.exe")]
 
 # O arquivo CSV padrão e o LOG também ficam na pasta do script para serem centrais
 DEFAULT_CSV_FILE = os.path.join(SCRIPT_DIR, CONFIG["settings"]["default_csv_file"])
@@ -207,7 +218,7 @@ def sync_data(table, needs_creation=False):
     try:
         with open(temp_sql, "w", encoding='utf-8') as f: f.write(header_sql)
         
-        dump_cmd = [MYSQLDUMP_EXE, "-h", ORIGEM_CONFIG['host'], "-u", ORIGEM_CONFIG['user'], f"-p{ORIGEM_CONFIG['password']}"]
+        dump_cmd = MYSQLDUMP_BASE_CMD + ["-h", ORIGEM_CONFIG['host'], "-u", ORIGEM_CONFIG['user'], f"-p{ORIGEM_CONFIG['password']}"]
         if not needs_creation: dump_cmd.append("--no-create-info")
         dump_cmd.extend(["--complete-insert", "--skip-add-locks", "--skip-comments", "--single-transaction", "--quick", "--default-character-set=latin1", ORIGEM_CONFIG['database'], table])
 
@@ -224,7 +235,7 @@ def sync_data(table, needs_creation=False):
 
         # Import
         file_size = os.path.getsize(temp_sql)
-        import_cmd = [MYSQL_EXE, "-h", DESTINO_CONFIG['host'], "-u", DESTINO_CONFIG['user'], f"-p{DESTINO_CONFIG['password']}", "--default-character-set=latin1", DESTINO_CONFIG['database']]
+        import_cmd = MYSQL_BASE_CMD + ["-h", DESTINO_CONFIG['host'], "-u", DESTINO_CONFIG['user'], f"-p{DESTINO_CONFIG['password']}", "--default-character-set=latin1", DESTINO_CONFIG['database']]
 
         if HAS_RICH:
             with subprocess.Popen(import_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE) as proc:

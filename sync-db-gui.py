@@ -32,6 +32,18 @@ class SyncEngine:
         self.destino = self.config["destino"]
         self.mysql_bin = self.settings["mysql_bin_path"]
 
+        mysql_client = self.settings.get("mysql_client", "local")
+        if mysql_client == "docker":
+            _container = self.settings["docker_container"]
+            _bin       = self.settings.get("docker_mysql_bin", "/usr/bin")
+            self.mysqldump_base_cmd = ["docker", "exec", "-i", _container,
+                                       f"{_bin}/{self.settings.get('docker_mysqldump_cmd', 'mysqldump')}"]
+            self.mysql_base_cmd    = ["docker", "exec", "-i", _container,
+                                       f"{_bin}/{self.settings.get('docker_mysql_cmd', 'mysql')}"]
+        else:
+            self.mysqldump_base_cmd = [os.path.join(self.mysql_bin, "mysqldump.exe")]
+            self.mysql_base_cmd    = [os.path.join(self.mysql_bin, "mysql.exe")]
+
     def get_conn(self, cfg):
         params = cfg.copy()
         params.pop('alias', None)
@@ -84,8 +96,7 @@ class SyncEngine:
             
             # Dump
             self.log(f"Baixando dados de {table}...")
-            dump_cmd = [
-                os.path.join(self.mysql_bin, "mysqldump.exe"),
+            dump_cmd = self.mysqldump_base_cmd + [
                 "-h", self.origem['host'], "-u", self.origem['user'], f"-p{self.origem['password']}"
             ]
             if not needs_creation: dump_cmd.append("--no-create-info")
@@ -104,9 +115,8 @@ class SyncEngine:
             # Import com Feedback
             self.log(f"Importando {table}...")
             file_size = os.path.getsize(temp_sql)
-            import_cmd = [
-                os.path.join(self.mysql_bin, "mysql.exe"),
-                "-h", self.destino['host'], "-u", self.destino['user'], f"-p{self.destino['password']}", 
+            import_cmd = self.mysql_base_cmd + [
+                "-h", self.destino['host'], "-u", self.destino['user'], f"-p{self.destino['password']}",
                 "--default-character-set=latin1", self.destino['database']
             ]
 
