@@ -148,6 +148,18 @@ def build_dump_command(client: DumpClient, defaults_file: Path, *, database: str
     return command
 
 
+def build_import_command(client: DumpClient, defaults_file: Path, *, database: str) -> list[str]:
+    command = [str(client.mysql), f"--defaults-extra-file={defaults_file}"]
+    if client.vendor == "mariadb":
+        # The managed MariaDB client may inherit TLS preferences from modern
+        # defaults. Local/dev MariaDB servers often do not support SSL, so keep
+        # imports to local destinations non-TLS by default. Source dumps still
+        # use TLS when the server requires it.
+        command.append("--ssl=0")
+    command.append(database)
+    return command
+
+
 def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths: AppPaths) -> TableResult:
     paths.ensure_dirs()
     origem = config["origem"]
@@ -169,7 +181,7 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
                 raise SyncError(f"Falha no dump de {table}: {proc.stderr.strip()}")
             out.write("\nSET FOREIGN_KEY_CHECKS=1;\n")
 
-        import_cmd = [str(client.mysql), f"--defaults-extra-file={dst_defaults}", destino["database"]]
+        import_cmd = build_import_command(client, dst_defaults, database=destino["database"])
         with sql_path.open("rb") as fh:
             proc = subprocess.run(import_cmd, stdin=fh, stderr=subprocess.PIPE, text=True, check=False)
         if proc.returncode != 0:
