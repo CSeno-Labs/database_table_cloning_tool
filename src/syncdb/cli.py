@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
@@ -76,6 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs", help="Gerencia logs")
     logs_sub = logs.add_subparsers(dest="logs_command")
     logs_sub.add_parser("path", help="Mostra caminho dos logs")
+    tail = logs_sub.add_parser("tail", help="Mostra últimas linhas do log")
+    tail.add_argument("-n", "--lines", type=int, default=40, help="Quantidade de linhas")
+    logs_sub.add_parser("open", help="Abre pasta dos logs")
     logs_sub.add_parser("clear", help="Limpa logs")
 
     uninstall = sub.add_parser("uninstall", help="Mostra instruções/atalho de desinstalação")
@@ -142,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     paths = AppPaths.current()
     if args.config:
         cfg_path = Path(args.config).expanduser().resolve()
-        paths = AppPaths(config_dir=cfg_path.parent, data_dir=paths.data_dir, state_dir=paths.state_dir, cache_dir=paths.cache_dir)
+        base_dir = cfg_path.parent.parent if cfg_path.parent.name == "config" else cfg_path.parent
+        paths = AppPaths(config_dir=cfg_path.parent, data_dir=base_dir / "data", state_dir=base_dir / "state", cache_dir=base_dir / "cache")
 
     try:
         return dispatch(args, parser, paths)
@@ -296,7 +301,35 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     for result in results:
         table.add_row(result.table, "OK" if result.ok else "FALHOU", result.engine, "" if result.rows is None else str(result.rows))
     console.print(table)
+    write_sync_log(paths, runtime_config, tables, resolved.kind, results)
     return 0 if all(r.ok for r in results) else 1
+
+
+def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list) -> Path:
+    paths.ensure_dirs()
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "origin": runtime_config.get("origem", {}).get("alias"),
+        "destination": runtime_config.get("destino", {}).get("alias"),
+        "origin_host": runtime_config.get("origem", {}).get("host"),
+        "destination_host": runtime_config.get("destino", {}).get("host"),
+        "tables": tables,
+        "engine": engine,
+        "status": "ok" if all(result.ok for result in results) else "failed",
+        "results": [
+            {
+                "table": result.table,
+                "ok": result.ok,
+                "engine": result.engine,
+                "rows": result.rows,
+                "message": result.message,
+            }
+            for result in results
+        ],
+    }
+    with paths.log_file.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return paths.log_file
 
 
 def cmd_tables(args: argparse.Namespace) -> int:
@@ -522,6 +555,22 @@ def cmd_client_install(paths: AppPaths, args: argparse.Namespace) -> int:
 def cmd_logs(paths: AppPaths, args: argparse.Namespace) -> int:
     sub = args.logs_command or "path"
     if sub == "path":
+        console.print(str(paths.log_dir))
+    elif sub == "tail":
+        if not paths.log_file.exists():
+            console.print(f"Nenhum log encontrado ainda em {paths.log_file}")
+            return 0
+        lines = paths.log_file.read_text(encoding="utf-8").splitlines()
+        for line in lines[-max(1, int(getattr(args, "lines", 40))):]:
+            console.print(line)
+    elif sub == "open":
+        paths.log_dir.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            subprocess.Popen(["explorer", str(paths.log_dir)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(paths.log_dir)])
+        else:
+            subprocess.Popen(["xdg-open", str(paths.log_dir)])
         console.print(str(paths.log_dir))
     elif sub == "clear":
         if paths.log_dir.exists() and confirm(f"Limpar logs em {paths.log_dir}?"):
