@@ -30,7 +30,11 @@ if ($Dev) {
     }
 }
 
-sync-db init
+$UserBin = Join-Path $env:USERPROFILE ".local\bin"
+$SyncDbExe = Join-Path $UserBin "sync-db.exe"
+$env:Path = "$UserBin;$env:Path"
+
+& $SyncDbExe init
 Write-Host ""
 Write-Host "sync-db instalado. Rode: sync-db doctor"
 Write-Host ""

@@ -69,8 +69,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def normalize_legacy_args(argv: list[str]) -> list[str]:
+    """Support the old CLI shape: sync-db -t tabela, -s, -l.
+
+    The new CLI is subcommand-based, but existing users naturally try the old
+    flags. Normalize those flags before argparse sees a subcommand position.
+    """
+    commands = {"init", "doctor", "sync", "tables", "config", "client", "logs", "uninstall"}
+    legacy_flags = {"-t", "--tables", "-f", "--file", "-s", "--showtables", "-l", "--logs"}
+    if not any(arg in legacy_flags for arg in argv):
+        return argv
+
+    insert_at = 0
+    while insert_at < len(argv):
+        arg = argv[insert_at]
+        if arg in commands:
+            return argv
+        if arg == "--config" and insert_at + 1 < len(argv):
+            insert_at += 2
+            continue
+        if arg.startswith("--config="):
+            insert_at += 1
+            continue
+        if arg.startswith("-"):
+            break
+        return argv
+
+    command = "sync"
+    normalized: list[str] = []
+    for arg in argv:
+        if arg in {"-s", "--showtables"}:
+            command = "tables"
+            continue
+        if arg in {"-l", "--logs"}:
+            command = "logs"
+            continue
+        normalized.append(arg)
+    normalized.insert(insert_at, command)
+    return normalized
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv = normalize_legacy_args(list(argv) if argv is not None else sys.argv[1:])
     args = parser.parse_args(argv)
     paths = AppPaths.current()
     if args.config:
@@ -205,6 +246,9 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
 
 def cmd_tables(args: argparse.Namespace) -> int:
     tables = collect_tables(args)
+    if not tables:
+        console.print("[red]ERRO[/] Nenhuma tabela informada. Use `sync-db tables -t tabela` ou `sync-db tables -f tabelas.csv`.")
+        return 2
     for i, table in enumerate(tables, 1):
         console.print(f"{i}. {table}")
     return 0

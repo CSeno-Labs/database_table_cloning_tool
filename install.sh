@@ -46,7 +46,12 @@ else
   uv tool install --reinstall "$TARGET"
 fi
 
-sync-db init
+SYNC_DB_BIN="$HOME/.local/bin/sync-db"
+if [ -x "$SYNC_DB_BIN" ]; then
+  "$SYNC_DB_BIN" init
+else
+  sync-db init
+fi
 
 echo ""
 echo "sync-db instalado. Rode: sync-db doctor"
