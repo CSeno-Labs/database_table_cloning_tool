@@ -1,83 +1,261 @@
-# sync-db 🚀
+# sync-db
 
-**English** | [Português](#português)
+CLI para sincronizar tabelas MySQL/MariaDB entre ambientes, com foco em instalação simples e diagnóstico claro.
 
-A professional CLI tool to synchronize specific MySQL tables between different environments (e.g., Production RDS to Localhost) with structure detection and progress visualization.
+Status desta branch: reestruturação inicial para CLI instalável. A GUI antiga ainda não é foco.
 
-## ✨ Key Features
+## Objetivo
 
-- **Smart Sync**: Automatically creates missing tables or adds new columns to existing ones.
-- **Visual Progress**: Real-time progress bars and status panels via `rich`.
-- **Memory Efficient**: Streams large data in chunks to save RAM.
-- **Global Access**: Command-line support to run from any directory.
-- **Centralized Config**: Manage credentials and aliases in a single `config.json`.
+Permitir que qualquer colega instale o programa e rode:
 
-## 🚀 Quick Start
+```bash
+sync-db doctor
+sync-db sync -t periodo aluno escola
+```
 
-1. **Install dependencies**:
-   ```bash
-   pip install mysql-connector-python rich
-   ```
-2. **Configure `config.json`** with your source (`origem`) and destination (`destino`) credentials.
-3. **Run**:
-   ```bash
-   python sync-db.py
-   ```
+sem depender de caminho hardcoded do XAMPP, `.bat` local, Docker ou MySQL Client instalado.
 
-## 🛠️ CLI Arguments
+## Motores de sincronização
 
-- `-t, --tables`: Sync specific tables (e.g., `-t user logs`).
-- `-f, --file`: Sync tables from a custom TXT/CSV file.
-- `-s, --showtables`: List identified tables without syncing (Dry run).
-- `-l, --logs`: Show the last 20 log entries.
+O `sync-db sync` nunca baixa nem instala binários escondido.
 
-## 💻 Global Installation (Windows)
+No modo padrão (`auto`), ele usa o que já estiver disponível, nesta ordem:
 
-To use `sinc-db` from any folder:
-1. Add the project folder path to your System **Environment Variables** (PATH).
-2. Open a new terminal and type:
-   ```bash
-   sinc-db -t table_name
-   ```
+1. Cliente gerenciado pelo próprio `sync-db` (`mariadb`/`mariadb-dump`) já instalado previamente.
+2. Cliente MariaDB/MySQL encontrado no sistema (`mariadb-dump`, `mariadb`, `mysqldump`, `mysql`).
+3. Engine Python usando `mysql-connector-python`.
 
----
+Se o usuário forçar `--mode dump` e nenhum cliente existir, o programa erra com instruções claras.
 
-## Português
+## Instalação em uma linha
 
-Ferramenta CLI para sincronização inteligente de tabelas MySQL entre ambientes (ex: Produção para Local), com detecção de estrutura e progresso visual.
+Linux/macOS:
 
-## ✨ Funcionalidades
+```bash
+curl -LsSf https://raw.githubusercontent.com/CSeno-Labs/database_table_cloning_tool/main/install.sh | sh
+```
 
-- **Sincronização Inteligente**: Cria tabelas ausentes ou adiciona novas colunas automaticamente.
-- **Progresso Visual**: Barras de progresso e painéis coloridos via `rich`.
-- **Eficiência**: Processa grandes volumes de dados em pedaços (chunks).
-- **Acesso Global**: Suporte para execução via terminal em qualquer diretório.
-- **Configuração Central**: Credenciais e apelidos gerenciados no `config.json`.
+Windows PowerShell:
 
-## 🚀 Início Rápido
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/CSeno-Labs/database_table_cloning_tool/main/install.ps1 | iex"
+```
 
-1. **Instale as dependências**:
-   ```bash
-   pip install mysql-connector-python rich
-   ```
-2. **Configure o `config.json`** com as credenciais de `origem` e `destino`.
-3. **Execute**:
-   ```bash
-   python sync-db.py
-   ```
+## Instalação a partir do repositório clonado
 
-## 🛠️ Argumentos CLI
+```bash
+git clone https://github.com/CSeno-Labs/database_table_cloning_tool.git
+cd database_table_cloning_tool
+./install.sh
+```
 
-- `-t, --tables`: Sincroniza tabelas específicas (ex: `-t usuario logs`).
-- `-f, --file`: Sincroniza tabelas de um arquivo TXT/CSV personalizado.
-- `-s, --showtables`: Apenas lista as tabelas (sem sincronizar).
-- `-l, --logs`: Exibe as últimas 20 entradas de log.
+Windows:
 
-## 💻 Instalação Global (Windows)
+```powershell
+git clone https://github.com/CSeno-Labs/database_table_cloning_tool.git
+cd database_table_cloning_tool
+.\install.ps1
+```
 
-Para usar o comando `sinc-db` em qualquer pasta:
-1. Adicione o caminho da pasta do projeto às **Variáveis de Ambiente** (PATH) do Sistema.
-2. Abra um novo terminal e digite:
-   ```bash
-   sinc-db -t nome_da_tabela
-   ```
+Modo desenvolvimento/editável:
+
+```bash
+./install.sh --dev
+```
+
+```powershell
+.\install.ps1 -Dev
+```
+
+## Comandos principais
+
+Criar config padrão:
+
+```bash
+sync-db init
+```
+
+Diagnosticar ambiente:
+
+```bash
+sync-db doctor
+```
+
+Sincronizar tabelas:
+
+```bash
+sync-db sync -t periodo aluno escola
+```
+
+Sincronizar por arquivo:
+
+```bash
+sync-db sync -f tabelas_puxar.csv
+```
+
+Forçar engine Python:
+
+```bash
+sync-db sync -t periodo --mode python
+```
+
+Forçar dump:
+
+```bash
+sync-db sync -t periodo --mode dump
+```
+
+## Configuração
+
+O config fica na pasta do usuário, não dentro do repositório.
+
+Ver caminho:
+
+```bash
+sync-db config path
+```
+
+Mostrar config com senha mascarada:
+
+```bash
+sync-db config show
+```
+
+Editar:
+
+```bash
+sync-db config edit
+```
+
+Formato base:
+
+```json
+{
+  "origem": {
+    "alias": "PROD",
+    "host": "host-da-origem",
+    "port": 3306,
+    "user": "usuario",
+    "password": "senha",
+    "database": "banco_origem",
+    "charset": "latin1"
+  },
+  "destino": {
+    "alias": "LOCAL",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "banco_destino",
+    "charset": "latin1"
+  },
+  "sync": {
+    "default_tables_file": "tabelas_puxar.csv",
+    "truncate_before_insert": true,
+    "create_missing_tables": true,
+    "add_missing_columns": true,
+    "batch_size": 1000
+  },
+  "client": {
+    "mode": "auto",
+    "preferred_source": "managed",
+    "vendor": "mariadb"
+  }
+}
+```
+
+Não existe `auto_download`: instalação de cliente é sempre explícita.
+
+## Cliente gerenciado
+
+Comandos:
+
+```bash
+sync-db client status
+sync-db client path
+sync-db client install
+sync-db client remove
+sync-db client update
+```
+
+Nesta primeira branch, `client install` já existe como fluxo explícito, mas ainda exige `--archive-url` até definirmos a URL oficial/validada dos pacotes MariaDB portáteis por plataforma.
+
+Exemplo:
+
+```bash
+sync-db client install --archive-url https://exemplo/pacote-mariadb-portatil.zip
+```
+
+## Docker
+
+O programa não precisa saber que o banco está em Docker se a porta estiver exposta.
+
+Exemplo:
+
+```yaml
+services:
+  mysql:
+    image: mysql:8
+    ports:
+      - "3306:3306"
+```
+
+Config destino:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 3306,
+  "user": "root",
+  "password": "root",
+  "database": "app"
+}
+```
+
+Se a porta não estiver exposta, nenhum cliente externo consegue conectar sem usar Docker diretamente.
+
+## Desinstalação
+
+Linux/macOS:
+
+```bash
+./uninstall.sh
+```
+
+Remover também config/dados:
+
+```bash
+./uninstall.sh --all
+```
+
+Windows:
+
+```powershell
+.\uninstall.ps1
+```
+
+Remover também config/dados:
+
+```powershell
+.\uninstall.ps1 -All
+```
+
+Ou pelo próprio comando:
+
+```bash
+sync-db uninstall
+```
+
+## Desenvolvimento
+
+Rodar testes:
+
+```bash
+uv run --with pytest --with platformdirs --with rich --with mysql-connector-python pytest tests -q
+```
+
+Rodar CLI local:
+
+```bash
+uv run sync-db --help
+```

@@ -1,25 +1,33 @@
 {
-    "settings": {
-        "mysql_bin_path": "C:\\xampp\\mysql\\bin",
-        "default_csv_file": "tabelas_puxar.csv",
-        "log_file": "sincronizacao.log"
-    },
-    "origem": {
-        "alias": "PROD",
-        "host": "",
-        "user": "",
-        "password": "",
-        "database": "",
-        "port": 3306,
-        "charset": ""
-    },
-    "destino": {
-        "alias": "DEV",
-        "host": "localhost",
-        "user": "root",
-        "password": "1",
-        "database": "",
-        "port": 3306,
-        "charset": ""
-    }
+  "origem": {
+    "alias": "PROD",
+    "host": "host-da-origem",
+    "port": 3306,
+    "user": "usuario",
+    "password": "senha",
+    "database": "banco_origem",
+    "charset": "latin1"
+  },
+  "destino": {
+    "alias": "LOCAL",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "banco_destino",
+    "charset": "latin1"
+  },
+  "sync": {
+    "default_tables_file": "tabelas_puxar.csv",
+    "truncate_before_insert": true,
+    "create_missing_tables": true,
+    "add_missing_columns": true,
+    "batch_size": 1000,
+    "default_character_set": "latin1"
+  },
+  "client": {
+    "mode": "auto",
+    "preferred_source": "managed",
+    "vendor": "mariadb"
+  }
 }
