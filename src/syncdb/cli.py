@@ -6,10 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
-import zipfile
 from pathlib import Path
-from urllib.request import urlretrieve
 
 from rich.console import Console
 from rich.table import Table
@@ -18,6 +15,7 @@ from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, redact_config, save_config
 from .db import test_connection
 from .engine import run_dump_sync, run_python_sync
+from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
 from .tables import parse_tables, parse_tables_file
 
@@ -53,10 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     client_sub.add_parser("status", help="Mostra clientes disponíveis")
     client_sub.add_parser("path", help="Mostra pasta do cliente gerenciado")
     install = client_sub.add_parser("install", help="Instala cliente gerenciado explicitamente")
-    install.add_argument("--archive-url", help="URL de um .zip/.tar.gz com binários mariadb/mariadb-dump")
-    install.add_argument("--yes", action="store_true", help="Não pedir confirmação")
+    add_client_install_args(install)
     client_sub.add_parser("remove", help="Remove cliente gerenciado")
-    client_sub.add_parser("update", help="Atualiza cliente gerenciado (alias para install)")
+    update = client_sub.add_parser("update", help="Atualiza cliente gerenciado (alias para install)")
+    add_client_install_args(update)
 
     logs = sub.add_parser("logs", help="Gerencia logs")
     logs_sub = logs.add_subparsers(dest="logs_command")
@@ -67,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall.add_argument("--all", action="store_true", help="Remove também config, cliente gerenciado e logs")
     uninstall.add_argument("--keep-config", action="store_true", help="Remove app e mantém config")
     return parser
+
+
+def add_client_install_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--archive-url", help="URL opcional de um .zip/.tar.gz customizado com binários mariadb/mariadb-dump")
+    parser.add_argument("--sha256", help="SHA256 esperado quando usar --archive-url")
+    parser.add_argument("--yes", action="store_true", help="Não pedir confirmação")
 
 
 def normalize_legacy_args(argv: list[str]) -> list[str]:
@@ -317,29 +321,29 @@ def cmd_client(paths: AppPaths, args: argparse.Namespace) -> int:
 
 def cmd_client_install(paths: AppPaths, args: argparse.Namespace) -> int:
     console.print("Este comando instala o cliente gerenciado explicitamente. O sync nunca baixa cliente escondido.")
-    if not args.archive_url:
-        console.print("[yellow]Ainda falta configurar a URL oficial dos pacotes MariaDB por plataforma.[/]")
-        console.print("Por enquanto, use --archive-url apontando para um .zip/.tar.gz contendo bin/mariadb e bin/mariadb-dump.")
+    try:
+        if args.archive_url:
+            target_desc = args.archive_url
+            sha_desc = args.sha256 or "não informado"
+        else:
+            package = resolve_default_package()
+            target_desc = f"{package.file_name} ({package.os_name}/{package.cpu})"
+            sha_desc = package.sha256
+        console.print(f"Pacote: {target_desc}")
+        console.print(f"Destino: {paths.managed_client_dir / 'mariadb' / 'current'}")
+        console.print(f"SHA256: {sha_desc}")
+        if not args.yes and not confirm("Continuar com a instalação do cliente MariaDB gerenciado?"):
+            console.print("Cancelado.")
+            return 1
+        client = install_managed_client(paths, archive_url=args.archive_url, sha256=args.sha256)
+        console.print(f"[green]Cliente gerenciado instalado:[/] {client.describe()}")
+        return 0
+    except ManagedClientError as exc:
+        console.print(f"[red]ERRO[/] {exc}")
         return 2
-    if not args.yes and not confirm(f"Baixar e instalar cliente de {args.archive_url} em {paths.managed_client_dir}?"):
-        console.print("Cancelado.")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]ERRO[/] Falha ao instalar cliente gerenciado: {exc}")
         return 1
-    paths.ensure_dirs()
-    archive = paths.cache_dir / Path(args.archive_url).name
-    console.print(f"Baixando {args.archive_url}...")
-    urlretrieve(args.archive_url, archive)
-    target = paths.managed_client_dir / "mariadb" / "current"
-    if target.exists():
-        shutil.rmtree(target)
-    target.mkdir(parents=True)
-    if archive.suffix == ".zip":
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(target)
-    else:
-        with tarfile.open(archive) as tf:
-            tf.extractall(target)
-    console.print(f"[green]Cliente instalado em:[/] {target}")
-    return 0
 
 
 def cmd_logs(paths: AppPaths, args: argparse.Namespace) -> int:

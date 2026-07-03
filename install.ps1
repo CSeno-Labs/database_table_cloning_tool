@@ -48,9 +48,8 @@ if ($WithClient) {
 }
 
 if ($installClient) {
-    Write-Host "A instalação do cliente gerenciado é explícita e nunca acontece durante sync."
-    Write-Host "Nesta branch inicial, rode com uma URL oficial/validada quando definida:"
-    Write-Host "  sync-db client install --archive-url <url-do-pacote-mariadb-portatil>"
+    Write-Host "Instalando cliente MariaDB portátil gerenciado..."
+    & $SyncDbExe client install --yes
 } else {
     Write-Host "Cliente gerenciado não instalado. O sync tentará cliente do sistema e fallback Python."
 }

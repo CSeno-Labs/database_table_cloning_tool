@@ -64,9 +64,12 @@ if [ "$WITH_CLIENT" = "ask" ]; then
 fi
 
 if [ "$WITH_CLIENT" = "yes" ]; then
-  echo "A instalação do cliente gerenciado é explícita e nunca acontece durante sync."
-  echo "Nesta branch inicial, rode com uma URL oficial/validada quando definida:"
-  echo "  sync-db client install --archive-url <url-do-pacote-mariadb-portatil>"
+  echo "Instalando cliente MariaDB portátil gerenciado..."
+  if [ -x "$SYNC_DB_BIN" ]; then
+    "$SYNC_DB_BIN" client install --yes
+  else
+    sync-db client install --yes
+  fi
 else
   echo "Cliente gerenciado não instalado. O sync tentará cliente do sistema e fallback Python."
 fi

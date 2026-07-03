@@ -21,7 +21,7 @@ O `sync-db sync` nunca baixa nem instala binários escondido.
 
 No modo padrão (`auto`), ele usa o que já estiver disponível, nesta ordem:
 
-1. Cliente gerenciado pelo próprio `sync-db` (`mariadb`/`mariadb-dump`) já instalado previamente.
+1. Cliente gerenciado pelo próprio `sync-db` (`mariadb`/`mariadb-dump`) instalado previamente pelo instalador ou por `sync-db client install`.
 2. Cliente MariaDB/MySQL encontrado no sistema (`mariadb-dump`, `mariadb`, `mysqldump`, `mysql`).
 3. Engine Python usando `mysql-connector-python`.
 
@@ -39,6 +39,18 @@ Windows PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/CSeno-Labs/database_table_cloning_tool/main/install.ps1 | iex"
+```
+
+O instalador pergunta se deve instalar o cliente MariaDB gerenciado. Para automatizar:
+
+```powershell
+.\install.ps1 -WithClient
+```
+
+ou:
+
+```powershell
+.\install.ps1 -NoClient
 ```
 
 ## Instalação a partir do repositório clonado
@@ -178,12 +190,29 @@ sync-db client remove
 sync-db client update
 ```
 
-Nesta primeira branch, `client install` já existe como fluxo explícito, mas ainda exige `--archive-url` até definirmos a URL oficial/validada dos pacotes MariaDB portáteis por plataforma.
+`sync-db client install` detecta o sistema/arquitetura e baixa um pacote oficial MariaDB via API de downloads do MariaDB. A instalação é explícita: o comando mostra pacote, destino e SHA256 antes de instalar, e o `sync-db sync` nunca baixa nada escondido.
 
-Exemplo:
+Plataformas automáticas suportadas nesta versão:
+
+- Windows x64: pacote `mariadb-*-winx64.zip`
+- Linux x86_64: pacote `mariadb-*-linux-systemd-x86_64.tar.gz`
+
+Uso recomendado:
 
 ```bash
-sync-db client install --archive-url https://exemplo/pacote-mariadb-portatil.zip
+sync-db client install
+```
+
+Sem confirmação interativa:
+
+```bash
+sync-db client install --yes
+```
+
+Pacote customizado ainda é possível:
+
+```bash
+sync-db client install --archive-url https://exemplo/pacote-mariadb-portatil.zip --sha256 <sha256>
 ```
 
 ## Docker
