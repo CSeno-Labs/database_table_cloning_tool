@@ -1,0 +1,87 @@
+from pathlib import Path
+
+from syncdb.cli import main
+
+
+def test_db_add_interactively_saves_profile(monkeypatch, tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+    answers = iter([
+        "prod_leitura",
+        "Produção leitura",
+        "prod.example.com",
+        "3306",
+        "reader",
+        "secret",
+        "sistema",
+        "latin1",
+        "s",
+        "n",
+        "n",
+    ])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    code = main(["--config", str(config), "db", "add"])
+
+    assert code == 0
+    shown = capsys.readouterr().out
+    assert "Banco salvo: prod_leitura" in shown
+    assert main(["--config", str(config), "db", "list"]) == 0
+    shown = capsys.readouterr().out
+    assert "prod_leitura" in shown
+    assert "source_only" in shown
+
+
+def test_db_set_defaults_updates_origin_and_destination(tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+    main(["--config", str(config), "init"])
+
+    code = main(["--config", str(config), "db", "set-defaults", "-o", "prod", "-d", "local"])
+
+    assert code == 0
+    shown = capsys.readouterr().out
+    assert "Origem padrão: prod" in shown
+    assert "Destino padrão: local" in shown
+
+
+def test_sync_uses_origin_destination_flags_and_saves_last_tables(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    calls = []
+
+    def fake_run_python_sync(sync_config, table):
+        calls.append((sync_config["origem"]["alias"], sync_config["destino"]["alias"], table))
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python", rows=1)
+
+    monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
+
+    code = main(["--config", str(config), "sync", "-t", "periodo", "aluno", "-o", "prod", "-d", "local", "--mode", "python"])
+
+    assert code == 0
+    assert calls == [("prod", "local", "periodo"), ("prod", "local", "aluno")]
+    last_file = tmp_path / "config" / "last_tables.txt"
+    assert last_file.read_text(encoding="utf-8").splitlines() == ["periodo", "aluno"]
+
+
+def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+    main(["--config", str(config), "init"])
+    (tmp_path / "config" / "last_tables.txt").write_text("periodo\n", encoding="utf-8")
+
+    code = main(["--config", str(config), "sync", "--mode", "python"])
+
+    assert code == 2
+    assert "Nenhuma tabela informada" in capsys.readouterr().out
+
+
+def test_bare_sync_db_opens_interactive_menu(monkeypatch, tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["0"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    shown = capsys.readouterr().out
+    assert "Menu sync-db" in shown
+    assert "Sincronizar tabelas" in shown

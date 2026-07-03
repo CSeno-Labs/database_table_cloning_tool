@@ -9,11 +9,12 @@ Status desta branch: reestruturação inicial para CLI instalável. A GUI antiga
 Permitir que qualquer colega instale o programa e rode:
 
 ```bash
+sync-db
 sync-db doctor
-sync-db sync -t periodo aluno escola
+sync-db sync -t periodo aluno escola -o prod -d local
 ```
 
-sem depender de caminho hardcoded do XAMPP, `.bat` local, Docker ou MySQL Client instalado.
+sem depender de caminho hardcoded do XAMPP, `.bat` local, Docker ou MySQL Client instalado. Rodar apenas `sync-db` abre o menu interativo; não dispara sincronização automaticamente.
 
 ## Motores de sincronização
 
@@ -97,6 +98,13 @@ Sincronizar tabelas:
 
 ```bash
 sync-db sync -t periodo aluno escola
+sync-db sync -t periodo -o prod -d local
+```
+
+A forma curta também funciona:
+
+```bash
+sync-db -t periodo -o prod -d local
 ```
 
 Sincronizar por arquivo:
@@ -121,7 +129,7 @@ sync-db sync -t periodo --mode system-dump
 
 ## Configuração
 
-O config fica na pasta do usuário, não dentro do repositório.
+O config fica na pasta do usuário, não dentro do repositório. Ele suporta vários bancos cadastrados no mesmo arquivo.
 
 Ver caminho:
 
@@ -145,26 +153,36 @@ Formato base:
 
 ```json
 {
-  "origem": {
-    "alias": "PROD",
-    "host": "host-da-origem",
-    "port": 3306,
-    "user": "usuario",
-    "password": "senha",
-    "database": "banco_origem",
-    "charset": "latin1"
+  "profiles": {
+    "prod": {
+      "label": "Produção leitura",
+      "host": "host-da-origem",
+      "port": 3306,
+      "user": "usuario",
+      "password": "senha",
+      "database": "banco_origem",
+      "charset": "latin1",
+      "allow_as_origin": true,
+      "allow_as_destination": false
+    },
+    "local": {
+      "label": "Local",
+      "host": "127.0.0.1",
+      "port": 3306,
+      "user": "root",
+      "password": "",
+      "database": "banco_destino",
+      "charset": "latin1",
+      "allow_as_origin": true,
+      "allow_as_destination": true
+    }
   },
-  "destino": {
-    "alias": "LOCAL",
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "",
-    "database": "banco_destino",
-    "charset": "latin1"
+  "defaults": {
+    "origin": "prod",
+    "destination": "local"
   },
   "sync": {
-    "default_tables_file": "tabelas_puxar.csv",
+    "last_tables_file": "last_tables.txt",
     "truncate_before_insert": true,
     "create_missing_tables": true,
     "add_missing_columns": true,
@@ -176,6 +194,25 @@ Formato base:
     "vendor": "mariadb"
   }
 }
+```
+
+Comandos para bancos:
+
+```bash
+sync-db db list
+sync-db db add
+sync-db db edit prod
+sync-db db remove homolog
+sync-db db test prod
+sync-db db set-defaults -o prod -d local
+```
+
+`allow_as_destination=false` marca um banco como somente origem/source_only, útil para produção de leitura.
+
+O arquivo `last_tables.txt` guarda as últimas tabelas sincronizadas. Ele não é usado automaticamente por `sync-db` sem flags; para reutilizar explicitamente:
+
+```bash
+sync-db sync --last
 ```
 
 Não existe `auto_download`: instalação de cliente é sempre explícita.

@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .clients import find_managed_client, find_system_client, resolve_client
-from .config import ConfigError, ensure_config, load_config, redact_config, save_config
+from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
 from .db import test_connection
 from .engine import run_dump_sync, run_python_sync
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
@@ -32,6 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = sub.add_parser("sync", help="Sincroniza tabelas")
     add_table_args(sync)
+    sync.add_argument("-o", "--origin", help="Tag do banco de origem")
+    sync.add_argument("-d", "--destination", help="Tag do banco de destino")
+    sync.add_argument("--last", action="store_true", help="Usa as últimas tabelas sincronizadas")
     sync.add_argument("--mode", choices=["auto", "dump", "managed-dump", "system-dump", "python"], help="Motor de sincronização")
 
     tables = sub.add_parser("tables", help="Lista tabelas identificadas")
@@ -44,6 +47,21 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_sub.add_parser("show", help="Mostra config com senha mascarada")
     cfg_sub.add_parser("edit", help="Abre config no editor padrão")
     cfg_sub.add_parser("remove", help="Remove config com confirmação")
+
+    db = sub.add_parser("db", help="Gerencia bancos/conexões cadastrados")
+    db_sub = db.add_subparsers(dest="db_command")
+    db_sub.add_parser("list", help="Lista bancos cadastrados")
+    add_db = db_sub.add_parser("add", help="Cadastra banco interativamente")
+    add_db.add_argument("tag", nargs="?", help="Tag do banco")
+    edit_db = db_sub.add_parser("edit", help="Edita banco interativamente")
+    edit_db.add_argument("tag")
+    rm_db = db_sub.add_parser("remove", help="Remove banco")
+    rm_db.add_argument("tag")
+    test_db = db_sub.add_parser("test", help="Testa conexão de um banco")
+    test_db.add_argument("tag", nargs="?")
+    defaults_db = db_sub.add_parser("set-defaults", help="Define origem/destino padrão")
+    defaults_db.add_argument("-o", "--origin", required=True)
+    defaults_db.add_argument("-d", "--destination", required=True)
 
     client = sub.add_parser("client", help="Gerencia cliente MariaDB/MySQL portátil")
     client_sub = client.add_subparsers(dest="client_command")
@@ -83,8 +101,8 @@ def normalize_legacy_args(argv: list[str]) -> list[str]:
     The new CLI is subcommand-based, but existing users naturally try the old
     flags. Normalize those flags before argparse sees a subcommand position.
     """
-    commands = {"init", "doctor", "sync", "tables", "config", "client", "logs", "uninstall"}
-    legacy_flags = {"-t", "--tables", "-f", "--file", "-s", "--showtables", "-l", "--logs"}
+    commands = {"init", "doctor", "sync", "tables", "config", "db", "client", "logs", "uninstall"}
+    legacy_flags = {"-t", "--tables", "-f", "--file", "-o", "--origin", "-d", "--destination", "-s", "--showtables", "-l", "--logs"}
     if not any(arg in legacy_flags for arg in argv):
         return argv
 
@@ -136,8 +154,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: AppPaths) -> int:
     if not args.command:
-        parser.print_help()
-        return 0
+        return run_interactive_menu(paths)
     if args.command == "init":
         return cmd_init(paths)
     if args.command == "doctor":
@@ -148,6 +165,8 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
         return cmd_tables(args)
     if args.command == "config":
         return cmd_config(paths, args)
+    if args.command == "db":
+        return cmd_db(paths, args)
     if args.command == "client":
         return cmd_client(paths, args)
     if args.command == "logs":
@@ -186,16 +205,18 @@ def cmd_doctor(paths: AppPaths) -> int:
     console.print(f"Motor recomendado: [bold]{resolved.kind}[/] ({resolved.reason})")
 
     failed = False
-    for section in ("origem", "destino"):
-        db_cfg = config[section]
+    profiles = config.get("profiles", {})
+    if not profiles:
+        console.print("[yellow]WARN[/] Nenhum banco cadastrado. Rode: sync-db db add")
+    for tag, db_cfg in profiles.items():
         if not db_cfg.get("host") or not db_cfg.get("database") or not db_cfg.get("user"):
-            console.print(f"[yellow]WARN[/] {section}: host/user/database ainda não configurados")
+            console.print(f"[yellow]WARN[/] {tag}: host/user/database ainda não configurados")
             continue
         ok, msg = test_connection(db_cfg)
         if ok:
-            console.print(f"[green]OK[/] Conexão {section} ({db_cfg.get('alias')}): MySQL/MariaDB {msg}")
+            console.print(f"[green]OK[/] Conexão {tag} ({db_cfg.get('label')}): MySQL/MariaDB {msg}")
         else:
-            console.print(f"[red]ERRO[/] Conexão {section}: {msg}")
+            console.print(f"[red]ERRO[/] Conexão {tag}: {msg}")
             failed = True
     return 1 if failed else 0
 
@@ -206,19 +227,45 @@ def collect_tables(args: argparse.Namespace, config: dict | None = None) -> list
         values.extend(args.tables)
     if getattr(args, "file", None):
         return parse_tables(values) + [t for t in parse_tables_file(args.file) if t not in parse_tables(values)]
-    if not values and config:
-        default_file = config.get("sync", {}).get("default_tables_file")
-        if default_file and Path(default_file).exists():
-            return parse_tables_file(default_file)
     return parse_tables(values)
+
+
+def last_tables_path(paths: AppPaths, config: dict) -> Path:
+    configured = config.get("sync", {}).get("last_tables_file") or "last_tables.txt"
+    path = Path(configured).expanduser()
+    if not path.is_absolute():
+        path = paths.config_dir / path
+    return path
+
+
+def save_last_tables(paths: AppPaths, config: dict, tables: list[str]) -> Path:
+    path = last_tables_path(paths, config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(tables) + "\n", encoding="utf-8")
+    return path
+
+
+def read_last_tables(paths: AppPaths, config: dict) -> list[str]:
+    path = last_tables_path(paths, config)
+    if not path.exists():
+        return []
+    return parse_tables_file(path)
 
 
 def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     config = load_config(paths)
-    tables = collect_tables(args, config)
+    tables = read_last_tables(paths, config) if getattr(args, "last", False) else collect_tables(args, config)
     if not tables:
-        console.print("[red]ERRO[/] Nenhuma tabela informada. Use -t ou -f.")
+        console.print("[red]ERRO[/] Nenhuma tabela informada. Use -t, -f ou --last.")
         return 2
+
+    try:
+        runtime_config = sync_runtime_config(config, getattr(args, "origin", None), getattr(args, "destination", None))
+    except ValueError as exc:
+        console.print(f"[red]ERRO[/] {exc}")
+        return 2
+    console.print(f"Fluxo: [bold]{runtime_config['origem']['alias']}[/] → [bold]{runtime_config['destino']['alias']}[/]")
+    save_last_tables(paths, config, tables)
 
     mode = args.mode or config.get("client", {}).get("mode", "auto")
     resolved = resolve_client(paths, mode, config["client"].get("preferred_source", "managed"), config["client"].get("vendor", "mariadb"))
@@ -232,9 +279,9 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     for table in tables:
         console.print(f"\n[bold]Sincronizando {table}[/]")
         if resolved.kind == "dump" and resolved.client:
-            result = run_dump_sync(config, table, resolved.client, paths)
+            result = run_dump_sync(runtime_config, table, resolved.client, paths)
         else:
-            result = run_python_sync(config, table)
+            result = run_python_sync(runtime_config, table)
         results.append(result)
         if result.ok:
             console.print(f"[green]OK[/] {table} ({result.engine}) rows={result.rows}")
@@ -299,6 +346,119 @@ def cmd_config(paths: AppPaths, args: argparse.Namespace) -> int:
             path.unlink()
             console.print("[green]Config removido.[/]")
     return 0
+
+
+def cmd_db(paths: AppPaths, args: argparse.Namespace) -> int:
+    config = load_config(paths)
+    sub = args.db_command or "list"
+    if sub == "list":
+        return cmd_db_list(config)
+    if sub == "add":
+        return cmd_db_add(paths, config, getattr(args, "tag", None))
+    if sub == "edit":
+        return cmd_db_add(paths, config, args.tag, editing=True)
+    if sub == "remove":
+        tag = args.tag
+        if tag not in config.get("profiles", {}):
+            console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+            return 2
+        if confirm(f"Remover banco {tag}?"):
+            config["profiles"].pop(tag)
+            for key in ("origin", "destination"):
+                if config.get("defaults", {}).get(key) == tag:
+                    config["defaults"][key] = ""
+            save_config(config, paths)
+            console.print(f"[green]Banco removido:[/] {tag}")
+        return 0
+    if sub == "test":
+        tag = args.tag or config.get("defaults", {}).get("origin")
+        if tag not in config.get("profiles", {}):
+            console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+            return 2
+        ok, msg = test_connection(config["profiles"][tag])
+        if ok:
+            console.print(f"[green]OK[/] {tag}: MySQL/MariaDB {msg}")
+            return 0
+        console.print(f"[red]ERRO[/] {tag}: {msg}")
+        return 1
+    if sub == "set-defaults":
+        try:
+            resolve_profile_pair(config, args.origin, args.destination)
+        except ValueError as exc:
+            console.print(f"[red]ERRO[/] {exc}")
+            return 2
+        config.setdefault("defaults", {})["origin"] = args.origin
+        config.setdefault("defaults", {})["destination"] = args.destination
+        save_config(config, paths)
+        console.print(f"Origem padrão: {args.origin}")
+        console.print(f"Destino padrão: {args.destination}")
+        return 0
+    return cmd_db_list(config)
+
+
+def cmd_db_list(config: dict) -> int:
+    table = Table(title="Bancos cadastrados")
+    table.add_column("Tag")
+    table.add_column("Label")
+    table.add_column("Host")
+    table.add_column("Database")
+    table.add_column("Uso")
+    defaults = config.get("defaults", {})
+    for tag, profile in config.get("profiles", {}).items():
+        marks = []
+        if defaults.get("origin") == tag:
+            marks.append("origem padrão")
+        if defaults.get("destination") == tag:
+            marks.append("destino padrão")
+        if not profile.get("allow_as_destination", True):
+            marks.append("source_only")
+        table.add_row(tag, profile.get("label", ""), profile.get("host", ""), profile.get("database", ""), ", ".join(marks))
+    console.print(table)
+    return 0
+
+
+def cmd_db_add(paths: AppPaths, config: dict, tag: str | None, *, editing: bool = False) -> int:
+    profiles = config.setdefault("profiles", {})
+    if not tag:
+        tag = profile_tag(input("Tag do banco: "))
+    tag = profile_tag(tag)
+    current = profiles.get(tag, {}) if editing else {}
+    if editing and tag not in profiles:
+        console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+        return 2
+    profile = {
+        "label": ask("Rótulo amigável", current.get("label", tag)),
+        "host": ask("Host", current.get("host", "")),
+        "port": int(ask("Porta", str(current.get("port", 3306))) or 3306),
+        "user": ask("Usuário", current.get("user", "")),
+        "password": ask("Senha", current.get("password", "")),
+        "database": ask("Banco/database", current.get("database", "")),
+        "charset": ask("Charset", current.get("charset", "latin1")),
+        "allow_as_origin": confirm_default("Pode ser origem?", bool(current.get("allow_as_origin", True))),
+        "allow_as_destination": confirm_default("Pode ser destino?", bool(current.get("allow_as_destination", True))),
+    }
+    profiles[tag] = profile
+    save_config(config, paths)
+    console.print(f"[green]Banco salvo:[/] {tag}")
+    if confirm("Testar conexão agora?"):
+        ok, msg = test_connection(profile)
+        console.print(("[green]OK[/] " if ok else "[red]ERRO[/] ") + msg)
+        return 0 if ok else 1
+    return 0
+
+
+def ask(label: str, default: str = "") -> str:
+    suffix = f" [{default}]" if default else ""
+    value = input(f"{label}{suffix}: ").strip()
+    return value if value else default
+
+
+def confirm_default(question: str, default: bool) -> bool:
+    suffix = "S/n" if default else "s/N"
+    answer = input(f"{question} [{suffix}] ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"s", "sim", "y", "yes"}
 
 
 def cmd_client(paths: AppPaths, args: argparse.Namespace) -> int:
@@ -373,6 +533,90 @@ def cmd_uninstall(paths: AppPaths, args: argparse.Namespace) -> int:
     else:
         console.print("Por padrão, mantenha o config para uma reinstalação futura.")
     return 0
+
+
+def run_interactive_menu(paths: AppPaths) -> int:
+    ensure_config(paths)
+    while True:
+        console.print("\n[bold]Menu sync-db[/]")
+        console.print("[1] Sincronizar tabelas")
+        console.print("[2] Bancos / conexões")
+        console.print("[3] Configurações padrão")
+        console.print("[4] Doctor / diagnóstico")
+        console.print("[5] Cliente MariaDB gerenciado")
+        console.print("[6] Logs")
+        console.print("[7] Desinstalar sync-db")
+        console.print("[0] Sair")
+        choice = input("Escolha: ").strip()
+        if choice == "0":
+            return 0
+        if choice == "1":
+            return interactive_sync(paths)
+        if choice == "2":
+            return interactive_db(paths)
+        if choice == "3":
+            return interactive_defaults(paths)
+        if choice == "4":
+            return cmd_doctor(paths)
+        if choice == "5":
+            return interactive_client(paths)
+        if choice == "6":
+            return cmd_logs(paths, argparse.Namespace(logs_command="path"))
+        if choice == "7":
+            return cmd_uninstall(paths, argparse.Namespace(all=False, keep_config=True))
+        console.print("Opção inválida.")
+
+
+def interactive_sync(paths: AppPaths) -> int:
+    config = load_config(paths)
+    cmd_db_list(config)
+    origin = ask("Origem", config.get("defaults", {}).get("origin", ""))
+    destination = ask("Destino", config.get("defaults", {}).get("destination", ""))
+    last = read_last_tables(paths, config)
+    if last and confirm_default(f"Usar últimas tabelas ({', '.join(last)})?", False):
+        tables = last
+    else:
+        tables = parse_tables([input("Tabelas: ")])
+    mode = ask("Modo", config.get("client", {}).get("mode", "auto"))
+    console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo={mode}")
+    if not confirm("Continuar?"):
+        return 1
+    return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=mode))
+
+
+def interactive_db(paths: AppPaths) -> int:
+    console.print("[1] Listar bancos")
+    console.print("[2] Adicionar banco")
+    console.print("[3] Editar banco")
+    console.print("[4] Testar banco")
+    choice = input("Escolha: ").strip()
+    if choice == "2":
+        return cmd_db(paths, argparse.Namespace(db_command="add", tag=None))
+    if choice == "3":
+        return cmd_db(paths, argparse.Namespace(db_command="edit", tag=input("Tag: ").strip()))
+    if choice == "4":
+        return cmd_db(paths, argparse.Namespace(db_command="test", tag=input("Tag: ").strip() or None))
+    return cmd_db(paths, argparse.Namespace(db_command="list"))
+
+
+def interactive_defaults(paths: AppPaths) -> int:
+    config = load_config(paths)
+    cmd_db_list(config)
+    origin = ask("Origem padrão", config.get("defaults", {}).get("origin", ""))
+    destination = ask("Destino padrão", config.get("defaults", {}).get("destination", ""))
+    return cmd_db(paths, argparse.Namespace(db_command="set-defaults", origin=origin, destination=destination))
+
+
+def interactive_client(paths: AppPaths) -> int:
+    console.print("[1] Status")
+    console.print("[2] Instalar/atualizar MariaDB")
+    console.print("[3] Remover MariaDB")
+    choice = input("Escolha: ").strip()
+    if choice == "2":
+        return cmd_client(paths, argparse.Namespace(client_command="install", archive_url=None, sha256=None, yes=False))
+    if choice == "3":
+        return cmd_client(paths, argparse.Namespace(client_command="remove"))
+    return cmd_client(paths, argparse.Namespace(client_command="status"))
 
 
 def confirm(question: str) -> bool:

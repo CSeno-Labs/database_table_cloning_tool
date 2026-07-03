@@ -1,24 +1,34 @@
 {
-  "origem": {
-    "alias": "PROD",
-    "host": "host-da-origem",
-    "port": 3306,
-    "user": "usuario",
-    "password": "senha",
-    "database": "banco_origem",
-    "charset": "latin1"
+  "profiles": {
+    "prod": {
+      "label": "Produção leitura",
+      "host": "host-da-origem",
+      "port": 3306,
+      "user": "usuario",
+      "password": "senha",
+      "database": "banco_origem",
+      "charset": "latin1",
+      "allow_as_origin": true,
+      "allow_as_destination": false
+    },
+    "local": {
+      "label": "Local",
+      "host": "127.0.0.1",
+      "port": 3306,
+      "user": "root",
+      "password": "",
+      "database": "banco_destino",
+      "charset": "latin1",
+      "allow_as_origin": true,
+      "allow_as_destination": true
+    }
   },
-  "destino": {
-    "alias": "LOCAL",
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "",
-    "database": "banco_destino",
-    "charset": "latin1"
+  "defaults": {
+    "origin": "prod",
+    "destination": "local"
   },
   "sync": {
-    "default_tables_file": "tabelas_puxar.csv",
+    "last_tables_file": "last_tables.txt",
     "truncate_before_insert": true,
     "create_missing_tables": true,
     "add_missing_columns": true,
