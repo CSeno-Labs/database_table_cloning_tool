@@ -7,6 +7,11 @@ from typing import Any
 
 from .paths import AppPaths
 
+
+class ConfigError(RuntimeError):
+    """Raised when the user config cannot be loaded."""
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "origem": {
         "alias": "PROD",
@@ -60,8 +65,16 @@ def ensure_config(paths: AppPaths | None = None) -> Path:
 def load_config(paths: AppPaths | None = None) -> dict[str, Any]:
     paths = paths or AppPaths.current()
     ensure_config(paths)
-    with paths.config_file.open("r", encoding="utf-8") as fh:
-        data = json.load(fh)
+    try:
+        with paths.config_file.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(
+            f"Config JSON inválido em {paths.config_file}: {exc.msg} "
+            f"(line {exc.lineno} column {exc.colno})."
+        ) from exc
+    except OSError as exc:
+        raise ConfigError(f"Não consegui ler o config {paths.config_file}: {exc}") from exc
     return merge_defaults(data)
 
 

@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .clients import find_managed_client, find_system_client, resolve_client
-from .config import ensure_config, load_config, redact_config, save_config
+from .config import ConfigError, ensure_config, load_config, redact_config, save_config
 from .db import test_connection
 from .engine import run_dump_sync, run_python_sync
 from .paths import AppPaths
@@ -77,6 +77,15 @@ def main(argv: list[str] | None = None) -> int:
         cfg_path = Path(args.config).expanduser().resolve()
         paths = AppPaths(config_dir=cfg_path.parent, data_dir=paths.data_dir, state_dir=paths.state_dir, cache_dir=paths.cache_dir)
 
+    try:
+        return dispatch(args, parser, paths)
+    except ConfigError as exc:
+        console.print(f"[red]ERRO[/] {exc}")
+        console.print("Dica: rode `sync-db config path` e abra o arquivo no editor. Em JSON, barras invertidas precisam ser escapadas como `\\`.")
+        return 2
+
+
+def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: AppPaths) -> int:
     if not args.command:
         parser.print_help()
         return 0
@@ -201,6 +210,19 @@ def cmd_tables(args: argparse.Namespace) -> int:
     return 0
 
 
+def choose_editor(os_name: str | None = None) -> str:
+    os_name = os_name or os.name
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if os_name == "nt":
+        # Shells are common EDITOR values in PowerShell profiles and cause `config edit`
+        # to open a nested shell instead of the JSON file.
+        bad_shells = {"pwsh", "pwsh.exe", "powershell", "powershell.exe", "cmd", "cmd.exe"}
+        if editor and Path(editor).name.lower() not in bad_shells:
+            return editor
+        return "notepad"
+    return editor or "nano"
+
+
 def cmd_config(paths: AppPaths, args: argparse.Namespace) -> int:
     sub = args.config_command or "path"
     if sub == "path":
@@ -209,7 +231,7 @@ def cmd_config(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print_json(json.dumps(redact_config(load_config(paths)), ensure_ascii=False))
     elif sub == "edit":
         path = ensure_config(paths)
-        editor = os.environ.get("EDITOR") or ("notepad" if os.name == "nt" else "nano")
+        editor = choose_editor()
         return subprocess.call([editor, str(path)])
     elif sub == "remove":
         path = paths.config_file
