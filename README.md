@@ -25,7 +25,7 @@ No modo padrão (`auto`), ele usa o que já estiver disponível, nesta ordem:
 2. Cliente MariaDB/MySQL encontrado no sistema (`mariadb-dump`, `mariadb`, `mysqldump`, `mysql`).
 3. Engine Python usando `mysql-connector-python`.
 
-Se o usuário forçar `--mode dump` e nenhum cliente existir, o programa erra com instruções claras.
+Se o usuário forçar `--mode dump`, `--mode managed-dump` ou `--mode system-dump` e nenhum cliente compatível existir, o programa erra com instruções claras.
 
 ## Instalação em uma linha
 
@@ -115,6 +115,8 @@ Forçar dump:
 
 ```bash
 sync-db sync -t periodo --mode dump
+sync-db sync -t periodo --mode managed-dump
+sync-db sync -t periodo --mode system-dump
 ```
 
 ## Configuração

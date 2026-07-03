@@ -126,6 +126,28 @@ def _defaults_file(db_config: dict[str, Any], tmpdir: Path) -> Path:
     return path
 
 
+def build_dump_command(client: DumpClient, defaults_file: Path, *, database: str, table: str, include_create: bool) -> list[str]:
+    command = [str(client.dump), f"--defaults-extra-file={defaults_file}"]
+    if client.vendor == "mariadb":
+        # Newer MariaDB clients may verify server certificates by default and fail
+        # against production servers that use private/self-signed chains. Python's
+        # connector in this tool does not verify by default, so keep dump behavior
+        # equivalent unless the user later opts into strict SSL verification.
+        command.append("--ssl-verify-server-cert=0")
+    if not include_create:
+        command.append("--no-create-info")
+    command.extend([
+        "--complete-insert",
+        "--skip-add-locks",
+        "--skip-comments",
+        "--single-transaction",
+        "--quick",
+        database,
+        table,
+    ])
+    return command
+
+
 def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths: AppPaths) -> TableResult:
     paths.ensure_dirs()
     origem = config["origem"]
@@ -137,18 +159,7 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
     sql_path = tmpdir / f"sync-db-{table.replace('.', '_')}.sql"
     try:
         needs_creation = not table_exists(destino, table)
-        dump_cmd = [str(client.dump), f"--defaults-extra-file={src_defaults}"]
-        if not needs_creation:
-            dump_cmd.append("--no-create-info")
-        dump_cmd.extend([
-            "--complete-insert",
-            "--skip-add-locks",
-            "--skip-comments",
-            "--single-transaction",
-            "--quick",
-            origem["database"],
-            table,
-        ])
+        dump_cmd = build_dump_command(client, src_defaults, database=origem["database"], table=table, include_create=needs_creation)
         with sql_path.open("w", encoding="utf-8") as out:
             if not needs_creation and sync_cfg.get("truncate_before_insert", True):
                 out.write("SET FOREIGN_KEY_CHECKS=0;\n")

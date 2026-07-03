@@ -47,6 +47,7 @@ else
 fi
 
 SYNC_DB_BIN="$HOME/.local/bin/sync-db"
+rm -f "$HOME/.local/bin/sinc-db" "$HOME/.local/bin/sinc-db.exe"
 if [ -x "$SYNC_DB_BIN" ]; then
   "$SYNC_DB_BIN" init
 else

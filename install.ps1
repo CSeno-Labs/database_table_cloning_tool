@@ -31,6 +31,10 @@ if ($Dev) {
 }
 
 $UserBin = Join-Path $env:USERPROFILE ".local\bin"
+$OldAlias = Join-Path $UserBin "sinc-db.exe"
+if (Test-Path $OldAlias) {
+    Remove-Item $OldAlias -Force
+}
 $SyncDbExe = Join-Path $UserBin "sync-db.exe"
 $env:Path = "$UserBin;$env:Path"
 

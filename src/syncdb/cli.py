@@ -31,9 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="Diagnostica config, clientes e conexões")
 
     sync = sub.add_parser("sync", help="Sincroniza tabelas")
-    sync.add_argument("-t", "--tables", nargs="+", help="Tabelas para sincronizar")
-    sync.add_argument("-f", "--file", help="Arquivo .csv/.txt com tabelas")
-    sync.add_argument("--mode", choices=["auto", "dump", "python"], help="Motor de sincronização")
+    add_table_args(sync)
+    sync.add_argument("--mode", choices=["auto", "dump", "managed-dump", "system-dump", "python"], help="Motor de sincronização")
 
     tables = sub.add_parser("tables", help="Lista tabelas identificadas")
     tables.add_argument("-t", "--tables", nargs="+", help="Tabelas inline")
@@ -65,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall.add_argument("--all", action="store_true", help="Remove também config, cliente gerenciado e logs")
     uninstall.add_argument("--keep-config", action="store_true", help="Remove app e mantém config")
     return parser
+
+
+def add_table_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("-t", "--tables", nargs="+", help="Tabelas para sincronizar")
+    parser.add_argument("-f", "--file", help="Arquivo .csv/.txt com tabelas")
 
 
 def add_client_install_args(parser: argparse.ArgumentParser) -> None:
@@ -335,7 +339,8 @@ def cmd_client_install(paths: AppPaths, args: argparse.Namespace) -> int:
         if not args.yes and not confirm("Continuar com a instalação do cliente MariaDB gerenciado?"):
             console.print("Cancelado.")
             return 1
-        client = install_managed_client(paths, archive_url=args.archive_url, sha256=args.sha256)
+        with console.status("Baixando e instalando cliente MariaDB gerenciado...", spinner="dots"):
+            client = install_managed_client(paths, archive_url=args.archive_url, sha256=args.sha256)
         console.print(f"[green]Cliente gerenciado instalado:[/] {client.describe()}")
         return 0
     except ManagedClientError as exc:

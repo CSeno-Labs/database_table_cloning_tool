@@ -12,7 +12,6 @@ dependencies = [
 
 [project.scripts]
 sync-db = "syncdb.cli:main"
-sinc-db = "syncdb.cli:main"
 
 [project.optional-dependencies]
 dev = [
