@@ -148,6 +148,25 @@ def build_dump_command(client: DumpClient, defaults_file: Path, *, database: str
     return command
 
 
+def sql_string_literal(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def build_truncate_preamble(table: str) -> str:
+    table_name = table.split(".")[-1]
+    delete_sql = f"DELETE FROM {quote_identifier(table)}"
+    return (
+        "SET FOREIGN_KEY_CHECKS=0;\n"
+        "SET @syncdb_table_exists := ("
+        "SELECT COUNT(*) FROM information_schema.tables "
+        f"WHERE table_schema = DATABASE() AND table_name = {sql_string_literal(table_name)});\n"
+        f"SET @syncdb_sql := IF(@syncdb_table_exists > 0, {sql_string_literal(delete_sql)}, 'SELECT 1');\n"
+        "PREPARE syncdb_stmt FROM @syncdb_sql;\n"
+        "EXECUTE syncdb_stmt;\n"
+        "DEALLOCATE PREPARE syncdb_stmt;\n"
+    )
+
+
 def build_import_command(client: DumpClient, defaults_file: Path, *, database: str) -> list[str]:
     command = [str(client.mysql), f"--defaults-extra-file={defaults_file}"]
     if client.vendor == "mariadb":
@@ -173,9 +192,8 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
         needs_creation = not table_exists(destino, table)
         dump_cmd = build_dump_command(client, src_defaults, database=origem["database"], table=table, include_create=needs_creation)
         with sql_path.open("w", encoding="utf-8") as out:
-            if not needs_creation and sync_cfg.get("truncate_before_insert", True):
-                out.write("SET FOREIGN_KEY_CHECKS=0;\n")
-                out.write(f"DELETE FROM {quote_identifier(table)};\n")
+            if sync_cfg.get("truncate_before_insert", True):
+                out.write(build_truncate_preamble(table))
             proc = subprocess.run(dump_cmd, stdout=out, stderr=subprocess.PIPE, text=True, check=False)
             if proc.returncode != 0:
                 raise SyncError(f"Falha no dump de {table}: {proc.stderr.strip()}")
