@@ -162,6 +162,11 @@ def profile_tag(value: str) -> str:
     return value or "db"
 
 
+def db_connection_config(profile: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"host", "port", "user", "password", "database", "charset"}
+    return {key: value for key, value in profile.items() if key in allowed}
+
+
 def resolve_profile_pair(config: dict[str, Any], origin: str | None = None, destination: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     profiles = config.get("profiles", {})
     defaults = config.get("defaults", {})

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from .config import db_connection_config
+
 
 def connection_params(config: dict[str, Any]) -> dict[str, Any]:
-    params = dict(config)
-    params.pop("alias", None)
-    return params
+    return db_connection_config(config)
 
 
 def get_connection(config: dict[str, Any]):

@@ -396,15 +396,17 @@ def cmd_db(paths: AppPaths, args: argparse.Namespace) -> int:
     return cmd_db_list(config)
 
 
-def cmd_db_list(config: dict) -> int:
+def cmd_db_list(config: dict, *, show_numbers: bool = False) -> int:
     table = Table(title="Bancos cadastrados")
+    if show_numbers:
+        table.add_column("#")
     table.add_column("Tag")
     table.add_column("Label")
     table.add_column("Host")
     table.add_column("Database")
     table.add_column("Uso")
     defaults = config.get("defaults", {})
-    for tag, profile in config.get("profiles", {}).items():
+    for index, (tag, profile) in enumerate(config.get("profiles", {}).items(), 1):
         marks = []
         if defaults.get("origin") == tag:
             marks.append("origem padrão")
@@ -412,7 +414,10 @@ def cmd_db_list(config: dict) -> int:
             marks.append("destino padrão")
         if not profile.get("allow_as_destination", True):
             marks.append("source_only")
-        table.add_row(tag, profile.get("label", ""), profile.get("host", ""), profile.get("database", ""), ", ".join(marks))
+        row = [tag, profile.get("label", ""), profile.get("host", ""), profile.get("database", ""), ", ".join(marks)]
+        if show_numbers:
+            row.insert(0, str(index))
+        table.add_row(*row)
     console.print(table)
     return 0
 
@@ -425,6 +430,9 @@ def cmd_db_add(paths: AppPaths, config: dict, tag: str | None, *, editing: bool 
     current = profiles.get(tag, {}) if editing else {}
     if editing and tag not in profiles:
         console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+        return 2
+    if not editing and tag in profiles:
+        console.print(f"[red]ERRO[/] Banco {tag} já existe. Use `sync-db db edit {tag}` para alterar.")
         return 2
     profile = {
         "label": ask("Rótulo amigável", current.get("label", tag)),
@@ -535,6 +543,22 @@ def cmd_uninstall(paths: AppPaths, args: argparse.Namespace) -> int:
     return 0
 
 
+def resolve_profile_input(config: dict, value: str, default: str = "") -> str:
+    value = (value or "").strip()
+    if not value:
+        return default
+    tags = list(config.get("profiles", {}).keys())
+    if value.isdigit():
+        index = int(value) - 1
+        if 0 <= index < len(tags):
+            return tags[index]
+    return value
+
+
+def ask_profile(config: dict, label: str, default: str = "") -> str:
+    return resolve_profile_input(config, ask(label, default), default)
+
+
 def run_interactive_menu(paths: AppPaths) -> int:
     ensure_config(paths)
     while True:
@@ -569,9 +593,9 @@ def run_interactive_menu(paths: AppPaths) -> int:
 
 def interactive_sync(paths: AppPaths) -> int:
     config = load_config(paths)
-    cmd_db_list(config)
-    origin = ask("Origem", config.get("defaults", {}).get("origin", ""))
-    destination = ask("Destino", config.get("defaults", {}).get("destination", ""))
+    cmd_db_list(config, show_numbers=True)
+    origin = ask_profile(config, "Origem", config.get("defaults", {}).get("origin", ""))
+    destination = ask_profile(config, "Destino", config.get("defaults", {}).get("destination", ""))
     last = read_last_tables(paths, config)
     if last and confirm_default(f"Usar últimas tabelas ({', '.join(last)})?", False):
         tables = last
@@ -601,9 +625,9 @@ def interactive_db(paths: AppPaths) -> int:
 
 def interactive_defaults(paths: AppPaths) -> int:
     config = load_config(paths)
-    cmd_db_list(config)
-    origin = ask("Origem padrão", config.get("defaults", {}).get("origin", ""))
-    destination = ask("Destino padrão", config.get("defaults", {}).get("destination", ""))
+    cmd_db_list(config, show_numbers=True)
+    origin = ask_profile(config, "Origem padrão", config.get("defaults", {}).get("origin", ""))
+    destination = ask_profile(config, "Destino padrão", config.get("defaults", {}).get("destination", ""))
     return cmd_db(paths, argparse.Namespace(db_command="set-defaults", origin=origin, destination=destination))
 
 

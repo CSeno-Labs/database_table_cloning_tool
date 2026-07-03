@@ -31,6 +31,17 @@ def test_db_add_interactively_saves_profile(monkeypatch, tmp_path: Path, capsys)
     assert "source_only" in shown
 
 
+def test_db_add_refuses_existing_tag(monkeypatch, tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["local"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    code = main(["--config", str(config), "db", "add"])
+
+    assert code == 2
+    assert "já existe" in capsys.readouterr().out
+
+
 def test_db_set_defaults_updates_origin_and_destination(tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
     main(["--config", str(config), "init"])
@@ -72,6 +83,19 @@ def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys
 
     assert code == 2
     assert "Nenhuma tabela informada" in capsys.readouterr().out
+
+
+def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["3", "1", "2"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    shown = capsys.readouterr().out
+    assert "Origem padrão: prod" in shown
+    assert "Destino padrão: local" in shown
 
 
 def test_bare_sync_db_opens_interactive_menu(monkeypatch, tmp_path: Path, capsys):

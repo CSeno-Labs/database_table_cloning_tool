@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from syncdb.config import load_config, resolve_profile_pair, save_config
+from syncdb.config import db_connection_config, load_config, resolve_profile_pair, save_config
 from syncdb.paths import AppPaths
 
 
@@ -26,6 +26,30 @@ def test_old_origem_destino_config_is_migrated_to_profiles(tmp_path: Path):
     assert config["defaults"] == {"origin": "prod", "destination": "local"}
     assert config["profiles"]["prod"]["host"] == "prod.local"
     assert config["profiles"]["local"]["port"] == 3307
+
+
+def test_db_connection_config_strips_profile_metadata():
+    profile = {
+        "alias": "prod",
+        "label": "PROD",
+        "host": "h",
+        "port": 3306,
+        "user": "u",
+        "password": "p",
+        "database": "db",
+        "charset": "latin1",
+        "allow_as_origin": True,
+        "allow_as_destination": False,
+    }
+
+    assert db_connection_config(profile) == {
+        "host": "h",
+        "port": 3306,
+        "user": "u",
+        "password": "p",
+        "database": "db",
+        "charset": "latin1",
+    }
 
 
 def test_resolve_profile_pair_uses_defaults_and_cli_overrides(tmp_path: Path):
