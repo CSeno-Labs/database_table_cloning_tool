@@ -223,6 +223,14 @@ def choose_editor(os_name: str | None = None) -> str:
     return editor or "nano"
 
 
+def open_editor(editor: str, path: Path, os_name: str | None = None) -> int:
+    if (os_name or os.name) == "nt":
+        subprocess.Popen([editor, str(path)])
+        console.print(f"Editor aberto: {path}")
+        return 0
+    return subprocess.call([editor, str(path)])
+
+
 def cmd_config(paths: AppPaths, args: argparse.Namespace) -> int:
     sub = args.config_command or "path"
     if sub == "path":
@@ -232,7 +240,7 @@ def cmd_config(paths: AppPaths, args: argparse.Namespace) -> int:
     elif sub == "edit":
         path = ensure_config(paths)
         editor = choose_editor()
-        return subprocess.call([editor, str(path)])
+        return open_editor(editor, path)
     elif sub == "remove":
         path = paths.config_file
         if path.exists() and confirm(f"Remover config {path}?"):
