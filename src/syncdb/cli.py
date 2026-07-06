@@ -16,6 +16,7 @@ from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
 from .db import test_connection
 from .engine import run_dump_sync, run_python_sync
+from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
 from .tables import parse_tables, parse_tables_file
@@ -608,49 +609,109 @@ def ask_profile(config: dict, label: str, default: str = "") -> str:
     return resolve_profile_input(config, ask(label, default), default)
 
 
+def profile_options(config: dict, *, include_back: bool = True) -> list[MenuOption]:
+    options = [
+        MenuOption(f"{tag} ({profile.get('label', '')})", tag, f"{profile.get('host', '')}/{profile.get('database', '')}")
+        for tag, profile in config.get("profiles", {}).items()
+    ]
+    if include_back:
+        options.append(MenuOption("Voltar", "back"))
+    return options
+
+
+def choose_profile(config: dict, title: str, default: str = "") -> str:
+    options = profile_options(config)
+    if len(options) <= 1:
+        return ask_profile(config, title, default)
+    tags = list(config.get("profiles", {}).keys())
+    default_index = tags.index(default) if default in tags else 0
+    selected = select_option(title, options, default_index=default_index, console=console)
+    return selected
+
+
+def pause_after_action() -> None:
+    if sys.stdin.isatty():
+        input("\nPressione Enter para voltar ao menu...")
+
+
 def run_interactive_menu(paths: AppPaths) -> int:
     ensure_config(paths)
+    last_status = 0
     while True:
-        console.print("\n[bold]Menu sync-db[/]")
-        console.print("[1] Sincronizar tabelas")
-        console.print("[2] Bancos / conexões")
-        console.print("[3] Configurações padrão")
-        console.print("[4] Doctor / diagnóstico")
-        console.print("[5] Cliente MariaDB gerenciado")
-        console.print("[6] Logs")
-        console.print("[7] Desinstalar sync-db")
-        console.print("[0] Sair")
-        choice = input("Escolha: ").strip()
-        if choice == "0":
-            return 0
-        if choice == "1":
-            return interactive_sync(paths)
-        if choice == "2":
-            return interactive_db(paths)
-        if choice == "3":
-            return interactive_defaults(paths)
-        if choice == "4":
-            return cmd_doctor(paths)
-        if choice == "5":
-            return interactive_client(paths)
-        if choice == "6":
-            return cmd_logs(paths, argparse.Namespace(logs_command="path"))
-        if choice == "7":
-            return cmd_uninstall(paths, argparse.Namespace(all=False, keep_config=True))
-        console.print("Opção inválida.")
+        choice = select_option(
+            "Menu sync-db",
+            [
+                MenuOption("Sincronizar tabelas", "sync"),
+                MenuOption("Bancos / conexões", "db"),
+                MenuOption("Configurações padrão", "defaults"),
+                MenuOption("Doctor / diagnóstico", "doctor"),
+                MenuOption("Cliente MariaDB gerenciado", "client"),
+                MenuOption("Logs", "logs"),
+                MenuOption("Desinstalar sync-db", "uninstall"),
+                MenuOption("Sair", "exit"),
+            ],
+            console=console,
+        )
+        if choice in {"exit", "back"}:
+            return last_status
+        if choice == "sync":
+            last_status = interactive_sync(paths)
+            pause_after_action()
+        elif choice == "db":
+            last_status = interactive_db(paths)
+        elif choice == "defaults":
+            last_status = interactive_defaults(paths)
+            pause_after_action()
+        elif choice == "doctor":
+            last_status = cmd_doctor(paths)
+            pause_after_action()
+        elif choice == "client":
+            last_status = interactive_client(paths)
+        elif choice == "logs":
+            last_status = interactive_logs(paths)
+        elif choice == "uninstall":
+            last_status = cmd_uninstall(paths, argparse.Namespace(all=False, keep_config=True))
+            pause_after_action()
+        if not sys.stdin.isatty():
+            return last_status
 
 
 def interactive_sync(paths: AppPaths) -> int:
     config = load_config(paths)
-    cmd_db_list(config, show_numbers=True)
-    origin = ask_profile(config, "Origem", config.get("defaults", {}).get("origin", ""))
-    destination = ask_profile(config, "Destino", config.get("defaults", {}).get("destination", ""))
+    origin = choose_profile(config, "Selecione a origem", config.get("defaults", {}).get("origin", ""))
+    if origin == "back":
+        return 0
+    destination = choose_profile(config, "Selecione o destino", config.get("defaults", {}).get("destination", ""))
+    if destination == "back":
+        return 0
     last = read_last_tables(paths, config)
-    if last and confirm_default(f"Usar últimas tabelas ({', '.join(last)})?", False):
-        tables = last
-    else:
-        tables = parse_tables([input("Tabelas: ")])
-    mode = ask("Modo", config.get("client", {}).get("mode", "auto"))
+    table_source = "manual"
+    if last:
+        table_source = select_option(
+            "Tabelas",
+            [
+                MenuOption(f"Usar últimas ({', '.join(last)})", "last"),
+                MenuOption("Digitar tabelas", "manual"),
+                MenuOption("Voltar", "back"),
+            ],
+            console=console,
+        )
+    if table_source == "back":
+        return 0
+    tables = last if table_source == "last" else parse_tables([input("Tabelas: ")])
+    mode = select_option(
+        "Motor de sincronização",
+        [
+            MenuOption("auto", "auto", "recomendado"),
+            MenuOption("managed-dump", "managed-dump", "MariaDB gerenciado"),
+            MenuOption("system-dump", "system-dump", "cliente do sistema"),
+            MenuOption("python", "python", "fallback sem dump"),
+            MenuOption("Voltar", "back"),
+        ],
+        console=console,
+    )
+    if mode == "back":
+        return 0
     console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo={mode}")
     if not confirm("Continuar?"):
         return 1
@@ -658,38 +719,93 @@ def interactive_sync(paths: AppPaths) -> int:
 
 
 def interactive_db(paths: AppPaths) -> int:
-    console.print("[1] Listar bancos")
-    console.print("[2] Adicionar banco")
-    console.print("[3] Editar banco")
-    console.print("[4] Testar banco")
-    choice = input("Escolha: ").strip()
-    if choice == "2":
-        return cmd_db(paths, argparse.Namespace(db_command="add", tag=None))
-    if choice == "3":
-        return cmd_db(paths, argparse.Namespace(db_command="edit", tag=input("Tag: ").strip()))
-    if choice == "4":
-        return cmd_db(paths, argparse.Namespace(db_command="test", tag=input("Tag: ").strip() or None))
-    return cmd_db(paths, argparse.Namespace(db_command="list"))
+    while True:
+        choice = select_option(
+            "Bancos / conexões",
+            [
+                MenuOption("Listar bancos", "list"),
+                MenuOption("Adicionar banco", "add"),
+                MenuOption("Editar banco", "edit"),
+                MenuOption("Testar banco", "test"),
+                MenuOption("Remover banco", "remove"),
+                MenuOption("Voltar", "back"),
+            ],
+            console=console,
+        )
+        if choice == "back":
+            return 0
+        if choice == "list":
+            status = cmd_db(paths, argparse.Namespace(db_command="list"))
+        elif choice == "add":
+            status = cmd_db(paths, argparse.Namespace(db_command="add", tag=None))
+        elif choice == "edit":
+            config = load_config(paths)
+            tag = choose_profile(config, "Banco para editar", config.get("defaults", {}).get("destination", ""))
+            status = 0 if tag == "back" else cmd_db(paths, argparse.Namespace(db_command="edit", tag=tag))
+        elif choice == "test":
+            config = load_config(paths)
+            tag = choose_profile(config, "Banco para testar", config.get("defaults", {}).get("origin", ""))
+            status = 0 if tag == "back" else cmd_db(paths, argparse.Namespace(db_command="test", tag=tag))
+        elif choice == "remove":
+            config = load_config(paths)
+            tag = choose_profile(config, "Banco para remover", "")
+            status = 0 if tag == "back" else cmd_db(paths, argparse.Namespace(db_command="remove", tag=tag))
+        else:
+            status = 0
+        pause_after_action()
 
 
 def interactive_defaults(paths: AppPaths) -> int:
     config = load_config(paths)
-    cmd_db_list(config, show_numbers=True)
-    origin = ask_profile(config, "Origem padrão", config.get("defaults", {}).get("origin", ""))
-    destination = ask_profile(config, "Destino padrão", config.get("defaults", {}).get("destination", ""))
+    origin = choose_profile(config, "Origem padrão", config.get("defaults", {}).get("origin", ""))
+    if origin == "back":
+        return 0
+    destination = choose_profile(config, "Destino padrão", config.get("defaults", {}).get("destination", ""))
+    if destination == "back":
+        return 0
     return cmd_db(paths, argparse.Namespace(db_command="set-defaults", origin=origin, destination=destination))
 
 
 def interactive_client(paths: AppPaths) -> int:
-    console.print("[1] Status")
-    console.print("[2] Instalar/atualizar MariaDB")
-    console.print("[3] Remover MariaDB")
-    choice = input("Escolha: ").strip()
-    if choice == "2":
-        return cmd_client(paths, argparse.Namespace(client_command="install", archive_url=None, sha256=None, yes=False))
-    if choice == "3":
-        return cmd_client(paths, argparse.Namespace(client_command="remove"))
-    return cmd_client(paths, argparse.Namespace(client_command="status"))
+    while True:
+        choice = select_option(
+            "Cliente MariaDB gerenciado",
+            [
+                MenuOption("Status", "status"),
+                MenuOption("Instalar/atualizar MariaDB", "install"),
+                MenuOption("Remover MariaDB", "remove"),
+                MenuOption("Voltar", "back"),
+            ],
+            console=console,
+        )
+        if choice == "back":
+            return 0
+        if choice == "install":
+            status = cmd_client(paths, argparse.Namespace(client_command="install", archive_url=None, sha256=None, yes=False))
+        elif choice == "remove":
+            status = cmd_client(paths, argparse.Namespace(client_command="remove"))
+        else:
+            status = cmd_client(paths, argparse.Namespace(client_command="status"))
+        pause_after_action()
+
+
+def interactive_logs(paths: AppPaths) -> int:
+    choice = select_option(
+        "Logs",
+        [
+            MenuOption("Mostrar caminho", "path"),
+            MenuOption("Ver últimas linhas", "tail"),
+            MenuOption("Abrir pasta", "open"),
+            MenuOption("Limpar logs", "clear"),
+            MenuOption("Voltar", "back"),
+        ],
+        console=console,
+    )
+    if choice == "back":
+        return 0
+    status = cmd_logs(paths, argparse.Namespace(logs_command=choice, lines=40))
+    pause_after_action()
+    return status
 
 
 def confirm(question: str) -> bool:
