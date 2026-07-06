@@ -1,7 +1,14 @@
 from pathlib import Path
 
 from syncdb.clients import ClientSource, DumpClient
-from syncdb.engine import build_dump_command, build_import_command, delete_existing_rows
+from syncdb.engine import TableResult, backup_existing_table, build_dump_command, build_import_command, delete_existing_rows
+
+
+def test_table_result_has_stage_and_backup_metadata():
+    result = TableResult(table="periodo", ok=False, engine="dump", stage="import_dest", message="erro", backup_table="periodo_syncdb_backup_1")
+
+    assert result.stage == "import_dest"
+    assert result.backup_table == "periodo_syncdb_backup_1"
 
 
 def test_mariadb_dump_command_disables_server_cert_verification_by_default(tmp_path: Path):
@@ -91,3 +98,30 @@ def test_delete_existing_rows_handles_schema_table_name(monkeypatch):
     delete_existing_rows({"database": "local"}, "escola.periodo")
 
     assert "DELETE FROM `escola`.`periodo`" in executed
+
+
+def test_backup_existing_table_creates_timestamped_copy(monkeypatch):
+    executed = []
+
+    class FakeCursor:
+        def execute(self, sql):
+            executed.append(sql)
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            executed.append("COMMIT")
+
+        def close(self):
+            executed.append("CLOSE")
+
+    monkeypatch.setattr("syncdb.engine.get_connection", lambda config: FakeConnection())
+
+    backup_name = backup_existing_table({"database": "local"}, "periodo", suffix="20260706_120000")
+
+    assert backup_name == "periodo_syncdb_backup_20260706_120000"
+    assert "DROP TABLE IF EXISTS `periodo_syncdb_backup_20260706_120000`" in executed
+    assert "CREATE TABLE `periodo_syncdb_backup_20260706_120000` AS SELECT * FROM `periodo`" in executed
+    assert "COMMIT" in executed

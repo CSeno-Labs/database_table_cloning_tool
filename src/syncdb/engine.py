@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,8 @@ class TableResult:
     engine: str
     rows: int | None = None
     message: str = ""
+    stage: str = ""
+    backup_table: str | None = None
 
 
 class SyncError(RuntimeError):
@@ -178,6 +181,21 @@ def delete_existing_rows(config: dict[str, Any], table: str) -> None:
         conn.close()
 
 
+def backup_existing_table(config: dict[str, Any], table: str, *, suffix: str | None = None) -> str:
+    suffix = suffix or datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = table.split(".")[-1]
+    backup_name = f"{base}_syncdb_backup_{suffix}"
+    conn = get_connection(config)
+    try:
+        cur = conn.cursor()
+        cur.execute(f"DROP TABLE IF EXISTS {quote_identifier(backup_name)}")
+        cur.execute(f"CREATE TABLE {quote_identifier(backup_name)} AS SELECT * FROM {quote_identifier(table)}")
+        conn.commit()
+        return backup_name
+    finally:
+        conn.close()
+
+
 def build_import_command(client: DumpClient, defaults_file: Path, *, database: str) -> list[str]:
     command = [str(client.mysql), f"--defaults-extra-file={defaults_file}"]
     if client.vendor == "mariadb":
@@ -199,10 +217,18 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
     src_defaults = _defaults_file(origem, tmpdir)
     dst_defaults = _defaults_file(destino, tmpdir)
     sql_path = tmpdir / f"sync-db-{table.replace('.', '_')}.sql"
+    stage = "prepare"
+    backup_table: str | None = None
     try:
+        stage = "check_dest"
         needs_creation = not table_exists(destino, table)
+        if not needs_creation and sync_cfg.get("backup_before_replace"):
+            stage = "backup_dest"
+            backup_table = backup_existing_table(destino, table)
         if not needs_creation and sync_cfg.get("truncate_before_insert", True):
+            stage = "cleanup_dest"
             delete_existing_rows(destino, table)
+        stage = "dump_source"
         dump_cmd = build_dump_command(client, src_defaults, database=origem["database"], table=table, include_create=needs_creation)
         with sql_path.open("w", encoding="utf-8") as out:
             out.write("SET FOREIGN_KEY_CHECKS=0;\n")
@@ -211,14 +237,16 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
                 raise SyncError(f"Falha no dump de {table}: {proc.stderr.strip()}")
             out.write("\nSET FOREIGN_KEY_CHECKS=1;\n")
 
+        stage = "import_dest"
         import_cmd = build_import_command(client, dst_defaults, database=destino["database"])
         with sql_path.open("rb") as fh:
             proc = subprocess.run(import_cmd, stdin=fh, stderr=subprocess.PIPE, text=True, check=False)
         if proc.returncode != 0:
             raise SyncError(f"Falha no import de {table}: {proc.stderr.strip()}")
-        return TableResult(table=table, ok=True, engine=f"dump/{client.source.value}/{client.vendor}", rows=row_count(destino, table))
+        stage = "count_dest"
+        return TableResult(table=table, ok=True, engine=f"dump/{client.source.value}/{client.vendor}", rows=row_count(destino, table), stage="done", backup_table=backup_table)
     except Exception as exc:  # noqa: BLE001
-        return TableResult(table=table, ok=False, engine="dump", message=str(exc))
+        return TableResult(table=table, ok=False, engine="dump", message=str(exc), stage=stage, backup_table=backup_table)
     finally:
         for path in (src_defaults, dst_defaults, sql_path):
             try:
@@ -232,11 +260,14 @@ def run_python_sync(config: dict[str, Any], table: str) -> TableResult:
     destino = config["destino"]
     sync_cfg = config.get("sync", {})
     batch_size = int(sync_cfg.get("batch_size", 1000))
+    stage = "read_source_schema"
+    backup_table: str | None = None
     try:
         source_columns = get_columns(origem, table)
         if not source_columns:
             raise SyncError(f"Tabela {table} não encontrada na origem.")
         create_sql = sanitize_create_table(get_create_table(origem, table))
+        stage = "ensure_dest_structure"
         ensure_structure(
             destino,
             table,
@@ -245,21 +276,28 @@ def run_python_sync(config: dict[str, Any], table: str) -> TableResult:
             create_missing=bool(sync_cfg.get("create_missing_tables", True)),
             add_missing_columns=bool(sync_cfg.get("add_missing_columns", True)),
         )
+        if table_exists(destino, table) and sync_cfg.get("backup_before_replace"):
+            stage = "backup_dest"
+            backup_table = backup_existing_table(destino, table)
         columns = list(source_columns.keys())
         quoted_cols = ", ".join(quote_identifier(col) for col in columns)
         placeholders = ", ".join(["%s"] * len(columns))
         select_sql = f"SELECT {quoted_cols} FROM {quote_identifier(table)}"
         insert_sql = f"INSERT INTO {quote_identifier(table)} ({quoted_cols}) VALUES ({placeholders})"
 
+        stage = "connect"
         src = get_connection(origem)
         dst = get_connection(destino)
         rows = 0
+        dst_cur = None
         try:
             src_cur = src.cursor()
             dst_cur = dst.cursor()
+            stage = "cleanup_dest"
             dst_cur.execute("SET FOREIGN_KEY_CHECKS=0")
             if sync_cfg.get("truncate_before_insert", True):
                 dst_cur.execute(f"DELETE FROM {quote_identifier(table)}")
+            stage = "copy_rows"
             src_cur.execute(select_sql)
             while True:
                 batch = src_cur.fetchmany(batch_size)
@@ -268,14 +306,19 @@ def run_python_sync(config: dict[str, Any], table: str) -> TableResult:
                 dst_cur.executemany(insert_sql, batch)
                 rows += len(batch)
             dst.commit()
-            dst_cur.execute("SET FOREIGN_KEY_CHECKS=1")
-            dst.commit()
+            stage = "restore_fk"
         finally:
+            if dst_cur is not None:
+                try:
+                    dst_cur.execute("SET FOREIGN_KEY_CHECKS=1")
+                    dst.commit()
+                except Exception:
+                    pass
             src.close()
             dst.close()
-        return TableResult(table=table, ok=True, engine="python", rows=rows)
+        return TableResult(table=table, ok=True, engine="python", rows=rows, stage="done", backup_table=backup_table)
     except Exception as exc:  # noqa: BLE001
-        return TableResult(table=table, ok=False, engine="python", message=str(exc))
+        return TableResult(table=table, ok=False, engine="python", message=str(exc), stage=stage, backup_table=backup_table)
 
 
 def sanitize_create_table(sql: str) -> str:

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from .clients import find_managed_client, find_system_client, resolve_client
@@ -22,10 +23,12 @@ from .paths import AppPaths
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
+APP_VERSION = "2.0.0"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sync-db", description="Sincronizador de tabelas MySQL/MariaDB")
+    parser.add_argument("--version", action="store_true", help="Mostra versão e sai")
     parser.add_argument("--config", help="Caminho alternativo para config.json")
     sub = parser.add_subparsers(dest="command")
 
@@ -38,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("-d", "--destination", help="Tag do banco de destino")
     sync.add_argument("--last", action="store_true", help="Usa as últimas tabelas sincronizadas")
     sync.add_argument("--mode", choices=["auto", "dump", "managed-dump", "system-dump", "python"], help="Motor de sincronização")
+    sync.add_argument("--backup", nargs="?", const="keep", choices=["keep", "none"], help="Cria backup da tabela destino antes de sobrescrever (use --backup ou --backup keep)")
 
     tables = sub.add_parser("tables", help="Lista tabelas identificadas")
     tables.add_argument("-t", "--tables", nargs="+", help="Tabelas inline")
@@ -151,7 +155,13 @@ def main(argv: list[str] | None = None) -> int:
         paths = AppPaths(config_dir=cfg_path.parent, data_dir=base_dir / "data", state_dir=base_dir / "state", cache_dir=base_dir / "cache")
 
     try:
+        if args.version:
+            console.print(f"sync-db {APP_VERSION}")
+            return 0
         return dispatch(args, parser, paths)
+    except KeyboardInterrupt:
+        print_exit_banner()
+        return 130
     except ConfigError as exc:
         console.print(f"[red]ERRO[/] {exc}")
         console.print("Dica: rode `sync-db config path` e abra o arquivo no editor. Em JSON, barras invertidas precisam ser escapadas como `\\`.")
@@ -183,6 +193,20 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
     return 2
 
 
+def print_exit_banner() -> None:
+    if sys.stdin.isatty():
+        console.clear()
+    art = """
+███████╗██╗   ██╗███╗   ██╗ ██████╗       ██████╗ ██████╗
+██╔════╝╚██╗ ██╔╝████╗  ██║██╔════╝       ██╔══██╗██╔══██╗
+███████╗ ╚████╔╝ ██╔██╗ ██║██║      █████╗██║  ██║██████╔╝
+╚════██║  ╚██╔╝  ██║╚██╗██║██║      ╚════╝██║  ██║██╔══██╗
+███████║   ██║   ██║ ╚████║╚██████╗       ██████╔╝██████╔╝
+╚══════╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝       ╚═════╝ ╚═════╝
+""".strip("\n")
+    console.print(Panel(f"[bold cyan]{art}[/]\n\n[bold]sync-db[/]\n[dim]{'by: SNeto99':>62}[/]", border_style="cyan"))
+
+
 def cmd_init(paths: AppPaths) -> int:
     path = ensure_config(paths)
     console.print(f"[green]Config pronto:[/] {path}")
@@ -193,37 +217,40 @@ def cmd_init(paths: AppPaths) -> int:
 def cmd_doctor(paths: AppPaths) -> int:
     path = ensure_config(paths)
     config = load_config(paths)
-    console.print(f"[green]OK[/] Config: {path}")
+    console.print(Panel.fit(f"[bold]Config[/]\n{path}", title="sync-db doctor", border_style="green"))
 
     managed = find_managed_client(paths, config["client"].get("vendor", "mariadb"))
     system = find_system_client(config["client"].get("vendor", "mariadb"))
-    if managed:
-        console.print(f"[green]OK[/] Cliente gerenciado: {managed.describe()}")
-    else:
-        console.print(f"[yellow]WARN[/] Cliente gerenciado não instalado. Rode: sync-db client install")
-    if system:
-        console.print(f"[green]OK[/] Cliente do sistema: {system.describe()}")
-    else:
-        console.print("[yellow]WARN[/] Cliente dump do sistema não encontrado no PATH")
-    console.print("[green]OK[/] Engine Python disponível")
-
+    clients_table = Table(title="Clientes / motores")
+    clients_table.add_column("Item")
+    clients_table.add_column("Status")
+    clients_table.add_column("Detalhes")
+    clients_table.add_row("Cliente gerenciado", "OK" if managed else "WARN", managed.describe() if managed else "não instalado — rode: sync-db client install")
+    clients_table.add_row("Cliente do sistema", "OK" if system else "WARN", system.describe() if system else "não encontrado no PATH")
+    clients_table.add_row("Engine Python", "OK", "disponível")
     resolved = resolve_client(paths, config["client"].get("mode", "auto"), config["client"].get("preferred_source", "managed"), config["client"].get("vendor", "mariadb"))
-    console.print(f"Motor recomendado: [bold]{resolved.kind}[/] ({resolved.reason})")
+    clients_table.add_row("Motor recomendado", resolved.kind, resolved.reason)
+    console.print(clients_table)
 
     failed = False
     profiles = config.get("profiles", {})
+    conn_table = Table(title="Conexões")
+    conn_table.add_column("Tag")
+    conn_table.add_column("Nome")
+    conn_table.add_column("Host")
+    conn_table.add_column("Database")
+    conn_table.add_column("Status")
+    conn_table.add_column("Versão / mensagem")
     if not profiles:
         console.print("[yellow]WARN[/] Nenhum banco cadastrado. Rode: sync-db db add")
     for tag, db_cfg in profiles.items():
         if not db_cfg.get("host") or not db_cfg.get("database") or not db_cfg.get("user"):
-            console.print(f"[yellow]WARN[/] {tag}: host/user/database ainda não configurados")
+            conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), "WARN", "host/user/database ainda não configurados")
             continue
         ok, msg = test_connection(db_cfg)
-        if ok:
-            console.print(f"[green]OK[/] Conexão {tag} ({db_cfg.get('label')}): MySQL/MariaDB {msg}")
-        else:
-            console.print(f"[red]ERRO[/] Conexão {tag}: {msg}")
-            failed = True
+        conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), "OK" if ok else "ERRO", msg)
+        failed = failed or not ok
+    console.print(conn_table)
     return 1 if failed else 0
 
 
@@ -270,6 +297,8 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     except ValueError as exc:
         console.print(f"[red]ERRO[/] {exc}")
         return 2
+    backup_mode = getattr(args, "backup", None) or "none"
+    runtime_config.setdefault("sync", {})["backup_before_replace"] = backup_mode == "keep"
     console.print(f"Fluxo: [bold]{runtime_config['origem']['alias']}[/] → [bold]{runtime_config['destino']['alias']}[/]")
     save_last_tables(paths, config, tables)
 
@@ -283,24 +312,29 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
 
     results = []
     for table in tables:
-        console.print(f"\n[bold]Sincronizando {table}[/]")
-        if resolved.kind == "dump" and resolved.client:
-            result = run_dump_sync(runtime_config, table, resolved.client, paths)
-        else:
-            result = run_python_sync(runtime_config, table)
+        console.print(f"\n[bold cyan]Sincronizando {table}[/]")
+        with console.status(f"Carregando tabela {table}...", spinner="dots"):
+            if resolved.kind == "dump" and resolved.client:
+                result = run_dump_sync(runtime_config, table, resolved.client, paths)
+            else:
+                result = run_python_sync(runtime_config, table)
         results.append(result)
         if result.ok:
-            console.print(f"[green]OK[/] {table} ({result.engine}) rows={result.rows}")
+            extra = f" backup={result.backup_table}" if result.backup_table else ""
+            console.print(f"[green]OK[/] {table} ({result.engine}) rows={result.rows}{extra}")
         else:
-            console.print(f"[red]FALHOU[/] {table}: {result.message}")
+            stage = f" etapa={result.stage}" if result.stage else ""
+            console.print(f"[red]FALHOU[/] {table}{stage}: {result.message}")
 
     table = Table(title="Resumo")
     table.add_column("Tabela")
     table.add_column("Status")
     table.add_column("Engine")
+    table.add_column("Etapa")
     table.add_column("Linhas")
+    table.add_column("Backup")
     for result in results:
-        table.add_row(result.table, "OK" if result.ok else "FALHOU", result.engine, "" if result.rows is None else str(result.rows))
+        table.add_row(result.table, "OK" if result.ok else "FALHOU", result.engine, result.stage or "", "" if result.rows is None else str(result.rows), result.backup_table or "")
     console.print(table)
     write_sync_log(paths, runtime_config, tables, resolved.kind, results)
     return 0 if all(r.ok for r in results) else 1
@@ -324,6 +358,8 @@ def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], eng
                 "engine": result.engine,
                 "rows": result.rows,
                 "message": result.message,
+                "stage": result.stage,
+                "backup_table": result.backup_table,
             }
             for result in results
         ],
@@ -459,7 +495,7 @@ def cmd_db_list(config: dict, *, show_numbers: bool = False) -> int:
 def cmd_db_add(paths: AppPaths, config: dict, tag: str | None, *, editing: bool = False) -> int:
     profiles = config.setdefault("profiles", {})
     if not tag:
-        tag = profile_tag(input("Tag do banco: "))
+        tag = profile_tag(input("Apelido curto do banco (ex: prod, local, homolog): "))
     tag = profile_tag(tag)
     current = profiles.get(tag, {}) if editing else {}
     if editing and tag not in profiles:
@@ -508,10 +544,15 @@ def cmd_client(paths: AppPaths, args: argparse.Namespace) -> int:
     if sub == "status":
         managed = find_managed_client(paths)
         system = find_system_client()
-        console.print(f"Pasta cliente gerenciado: {paths.managed_client_dir}")
-        console.print(f"Cliente gerenciado: {managed.describe() if managed else 'não instalado'}")
-        console.print(f"Cliente do sistema: {system.describe() if system else 'não encontrado'}")
-        console.print("Engine Python: disponível")
+        table = Table(title="Cliente MariaDB / MySQL")
+        table.add_column("Item")
+        table.add_column("Status")
+        table.add_column("Detalhes")
+        table.add_row("Pasta gerenciada", "OK", str(paths.managed_client_dir))
+        table.add_row("Cliente gerenciado", "OK" if managed else "WARN", managed.describe() if managed else "não instalado")
+        table.add_row("Cliente do sistema", "OK" if system else "WARN", system.describe() if system else "não encontrado")
+        table.add_row("Engine Python", "OK", "disponível")
+        console.print(table)
     elif sub == "path":
         console.print(str(paths.managed_client_dir))
     elif sub in {"install", "update"}:
@@ -643,37 +684,56 @@ def run_interactive_menu(paths: AppPaths) -> int:
             [
                 MenuOption("Sincronizar tabelas", "sync"),
                 MenuOption("Bancos / conexões", "db"),
-                MenuOption("Configurações padrão", "defaults"),
-                MenuOption("Doctor / diagnóstico", "doctor"),
-                MenuOption("Cliente MariaDB gerenciado", "client"),
                 MenuOption("Logs", "logs"),
-                MenuOption("Desinstalar sync-db", "uninstall"),
+                MenuOption("Mais", "more"),
                 MenuOption("Sair", "exit"),
             ],
             console=console,
         )
         if choice in {"exit", "back"}:
+            print_exit_banner()
             return last_status
         if choice == "sync":
             last_status = interactive_sync(paths)
-            pause_after_action()
         elif choice == "db":
             last_status = interactive_db(paths)
-        elif choice == "defaults":
-            last_status = interactive_defaults(paths)
-            pause_after_action()
-        elif choice == "doctor":
-            last_status = cmd_doctor(paths)
-            pause_after_action()
-        elif choice == "client":
-            last_status = interactive_client(paths)
         elif choice == "logs":
             last_status = interactive_logs(paths)
-        elif choice == "uninstall":
-            last_status = cmd_uninstall(paths, argparse.Namespace(all=False, keep_config=True))
-            pause_after_action()
+        elif choice == "more":
+            last_status = interactive_more(paths)
         if not sys.stdin.isatty():
             return last_status
+
+
+def interactive_more(paths: AppPaths) -> int:
+    while True:
+        choice = select_option(
+            "Mais opções",
+            [
+                MenuOption("Configurações padrão", "defaults"),
+                MenuOption("Doctor / diagnóstico", "doctor"),
+                MenuOption("Cliente MariaDB gerenciado", "client"),
+                MenuOption("Desinstalar sync-db", "uninstall"),
+                MenuOption("Voltar", "back"),
+            ],
+            console=console,
+        )
+        if choice == "back":
+            return 0
+        if choice == "defaults":
+            status = interactive_defaults(paths)
+        elif choice == "doctor":
+            status = cmd_doctor(paths)
+            pause_after_action()
+        elif choice == "client":
+            status = interactive_client(paths)
+        elif choice == "uninstall":
+            status = cmd_uninstall(paths, argparse.Namespace(all=False, keep_config=True))
+            pause_after_action()
+        else:
+            status = 0
+        if not sys.stdin.isatty():
+            return status
 
 
 def interactive_sync(paths: AppPaths) -> int:
@@ -712,10 +772,11 @@ def interactive_sync(paths: AppPaths) -> int:
     )
     if mode == "back":
         return 0
-    console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo={mode}")
+    backup = "keep" if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False) else "none"
+    console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo={mode} | backup={backup}")
     if not confirm("Continuar?"):
         return 1
-    return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=mode))
+    return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=mode, backup=backup))
 
 
 def interactive_db(paths: AppPaths) -> int:

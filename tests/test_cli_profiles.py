@@ -74,6 +74,24 @@ def test_sync_uses_origin_destination_flags_and_saves_last_tables(monkeypatch, t
     assert last_file.read_text(encoding="utf-8").splitlines() == ["periodo", "aluno"]
 
 
+def test_sync_backup_flag_sets_runtime_config(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    seen = []
+
+    def fake_run_python_sync(sync_config, table):
+        seen.append(sync_config["sync"].get("backup_before_replace"))
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python", rows=1)
+
+    monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
+
+    code = main(["--config", str(config), "sync", "-t", "periodo", "--mode", "python", "--backup"])
+
+    assert code == 0
+    assert seen == [True]
+
+
 def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
     main(["--config", str(config), "init"])
@@ -87,7 +105,7 @@ def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys
 
 def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["3", "1", "2"])
+    answers = iter(["4", "1", "1", "2"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     code = main(["--config", str(config)])

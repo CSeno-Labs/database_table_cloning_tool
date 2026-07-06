@@ -99,6 +99,8 @@ Sincronizar tabelas:
 ```bash
 sync-db sync -t periodo aluno escola
 sync-db sync -t periodo -o prod -d local
+sync-db sync -t periodo -o prod -d local --backup
+sync-db --version
 ```
 
 A forma curta também funciona:
@@ -106,6 +108,18 @@ A forma curta também funciona:
 ```bash
 sync-db -t periodo -o prod -d local
 ```
+
+Rodar só `sync-db` abre o menu interativo com setas:
+
+```text
+1 - Sincronizar tabelas
+2 - Bancos / conexões
+3 - Logs
+4 - Mais
+5 - Sair
+```
+
+Use ↑/↓ para navegar, Enter para selecionar e Esc/← para voltar.
 
 Sincronizar por arquivo:
 
