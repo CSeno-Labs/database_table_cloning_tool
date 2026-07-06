@@ -32,7 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="Caminho alternativo para config.json")
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("init", help="Cria config padrão na pasta do usuário")
+    init = sub.add_parser("init", help="Cria config padrão na pasta do usuário")
+    init.add_argument("--quiet", action="store_true", help="Não imprime mensagens informativas")
     sub.add_parser("doctor", help="Diagnostica config, clientes e conexões")
 
     sync = sub.add_parser("sync", help="Sincroniza tabelas")
@@ -172,7 +173,7 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
     if not args.command:
         return run_interactive_menu(paths)
     if args.command == "init":
-        return cmd_init(paths)
+        return cmd_init(paths, quiet=getattr(args, "quiet", False))
     if args.command == "doctor":
         return cmd_doctor(paths)
     if args.command == "sync":
@@ -207,10 +208,11 @@ def print_exit_banner() -> None:
     console.print(Panel(f"[bold cyan]{art}[/]\n\n[bold]sync-db[/]\n[dim]{'by: SNeto99':>62}[/]", border_style="cyan"))
 
 
-def cmd_init(paths: AppPaths) -> int:
+def cmd_init(paths: AppPaths, *, quiet: bool = False) -> int:
     path = ensure_config(paths)
-    console.print(f"[green]Config pronto:[/] {path}")
-    console.print("Edite esse arquivo e depois rode: sync-db doctor")
+    if not quiet:
+        console.print(f"[green]Config pronto:[/] {path}")
+        console.print("Edite esse arquivo e depois rode: sync-db doctor")
     return 0
 
 
@@ -660,13 +662,13 @@ def profile_options(config: dict, *, include_back: bool = True) -> list[MenuOpti
     return options
 
 
-def choose_profile(config: dict, title: str, default: str = "") -> str:
+def choose_profile(config: dict, title: str, default: str = "", *, footer: str = "") -> str:
     options = profile_options(config)
     if len(options) <= 1:
         return ask_profile(config, title, default)
     tags = list(config.get("profiles", {}).keys())
     default_index = tags.index(default) if default in tags else 0
-    selected = select_option(title, options, default_index=default_index, console=console)
+    selected = select_option(title, options, default_index=default_index, console=console, footer=footer)
     return selected
 
 
@@ -736,31 +738,54 @@ def interactive_more(paths: AppPaths) -> int:
             return status
 
 
+def format_sync_context(*, origin: str = "", destination: str = "", tables: list[str] | None = None, mode: str = "") -> str:
+    lines = ["Você está configurando uma sincronização de tabelas."]
+    if origin:
+        lines.append(f"Origem escolhida: {origin}")
+    if destination:
+        lines.append(f"Destino escolhido: {destination}")
+    if tables:
+        lines.append(f"Tabelas escolhidas: {', '.join(tables)}")
+    if mode:
+        lines.append(f"Motor escolhido: {mode}")
+    return "\n".join(lines)
+
+
 def interactive_sync(paths: AppPaths) -> int:
     config = load_config(paths)
-    origin = choose_profile(config, "Selecione a origem", config.get("defaults", {}).get("origin", ""))
+    origin = choose_profile(config, "Sincronizar tabelas — escolha a origem", config.get("defaults", {}).get("origin", ""))
     if origin == "back":
         return 0
-    destination = choose_profile(config, "Selecione o destino", config.get("defaults", {}).get("destination", ""))
+    destination = choose_profile(
+        config,
+        "Sincronizar tabelas — escolha o destino",
+        config.get("defaults", {}).get("destination", ""),
+        footer=format_sync_context(origin=origin),
+    )
     if destination == "back":
         return 0
     last = read_last_tables(paths, config)
     table_source = "manual"
     if last:
         table_source = select_option(
-            "Tabelas",
+            "Sincronizar tabelas — escolha as tabelas",
             [
                 MenuOption(f"Usar últimas ({', '.join(last)})", "last"),
                 MenuOption("Digitar tabelas", "manual"),
                 MenuOption("Voltar", "back"),
             ],
             console=console,
+            footer=format_sync_context(origin=origin, destination=destination),
         )
     if table_source == "back":
         return 0
-    tables = last if table_source == "last" else parse_tables([input("Tabelas: ")])
+    if table_source == "last":
+        tables = last
+    else:
+        console.print(Panel(format_sync_context(origin=origin, destination=destination), title="Sincronizar tabelas", border_style="cyan"))
+        tables = parse_tables([input("Tabelas: ")])
     mode = select_option(
-        "Motor de sincronização",
+        "Sincronizar tabelas — escolha o motor",
         [
             MenuOption("auto", "auto", "recomendado"),
             MenuOption("managed-dump", "managed-dump", "MariaDB gerenciado"),
@@ -769,9 +794,11 @@ def interactive_sync(paths: AppPaths) -> int:
             MenuOption("Voltar", "back"),
         ],
         console=console,
+        footer=format_sync_context(origin=origin, destination=destination, tables=tables),
     )
     if mode == "back":
         return 0
+    console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode=mode), title="Resumo da sincronização", border_style="cyan"))
     backup = "keep" if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False) else "none"
     console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo={mode} | backup={backup}")
     if not confirm("Continuar?"):

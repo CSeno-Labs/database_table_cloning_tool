@@ -10,6 +10,16 @@ def test_version_flag_reports_2_0_0(capsys):
     assert "sync-db 2.0.0" in capsys.readouterr().out
 
 
+def test_init_quiet_suppresses_setup_messages(tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+
+    code = main(["--config", str(config), "init", "--quiet"])
+
+    assert code == 0
+    assert config.exists()
+    assert capsys.readouterr().out == ""
+
+
 def test_keyboard_interrupt_is_handled_cleanly(monkeypatch, tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
 

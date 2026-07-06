@@ -22,6 +22,8 @@ def apply_menu_key(index: int, key: str, options: list[MenuOption]) -> tuple[int
     if not options:
         return 0, None
     key = key.lower()
+    if key in {"\x03", "ctrl+c", "ctrl_c"}:
+        raise KeyboardInterrupt
     if key in {"up", "k"}:
         return (index - 1) % len(options), None
     if key in {"down", "j"}:
@@ -92,6 +94,7 @@ def select_option(
     default_index: int = 0,
     console: Console | None = None,
     key_reader: KeyReader = read_key,
+    footer: str = "",
 ) -> Any:
     console = console or Console()
     option_list = list(options)
@@ -103,6 +106,8 @@ def select_option(
         for idx, option in enumerate(option_list, 1):
             suffix = f" — {option.description}" if option.description else ""
             console.print(f"[{idx}] {option.label}{suffix}")
+        if footer:
+            console.print(f"\n[dim]{footer}[/]")
         console.print("[0] Voltar")
         value = input("Escolha: ").strip()
         if not value:
@@ -120,6 +125,8 @@ def select_option(
             style = "reverse bold" if idx == index else ""
             suffix = f" — {option.description}" if option.description else ""
             console.print(f"{marker} {idx + 1}. {option.label}{suffix}", style=style)
+        if footer:
+            console.print(f"\n[dim]{footer}[/]")
         key = key_reader()
         index, selected = apply_menu_key(index, key, option_list)
         if selected is not None:

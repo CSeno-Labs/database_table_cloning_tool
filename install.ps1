@@ -38,10 +38,7 @@ if (Test-Path $OldAlias) {
 $SyncDbExe = Join-Path $UserBin "sync-db.exe"
 $env:Path = "$UserBin;$env:Path"
 
-& $SyncDbExe init
-Write-Host ""
-Write-Host "sync-db instalado. Rode: sync-db doctor"
-Write-Host ""
+& $SyncDbExe init --quiet
 
 $installClient = $false
 if ($WithClient) {
@@ -54,6 +51,4 @@ if ($WithClient) {
 if ($installClient) {
     Write-Host "Instalando cliente MariaDB portátil gerenciado..."
     & $SyncDbExe client install --yes
-} else {
-    Write-Host "Cliente gerenciado não instalado. O sync tentará cliente do sistema e fallback Python."
 }

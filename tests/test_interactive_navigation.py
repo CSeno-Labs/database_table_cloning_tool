@@ -1,4 +1,4 @@
-from syncdb.interactive import MenuOption, apply_menu_key
+from syncdb.interactive import MenuOption, apply_menu_key, select_option
 
 
 def test_apply_menu_key_wraps_with_arrows():
@@ -20,3 +20,30 @@ def test_apply_menu_key_accepts_number_shortcut():
     options = [MenuOption("A", "a"), MenuOption("B", "b")]
 
     assert apply_menu_key(0, "2", options) == (1, "b")
+
+
+def test_ctrl_c_character_raises_keyboard_interrupt():
+    options = [MenuOption("A", "a")]
+
+    try:
+        apply_menu_key(0, "\x03", options)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("Ctrl+C character should raise KeyboardInterrupt")
+
+
+def test_select_option_non_tty_prints_context_footer(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "1")
+
+    selected = select_option(
+        "Sincronizar tabelas — escolha a origem",
+        [MenuOption("prod", "prod")],
+        footer="Tabelas escolhidas: periodo, aluno",
+    )
+
+    shown = capsys.readouterr().out
+    assert selected == "prod"
+    assert "Sincronizar tabelas" in shown
+    assert "Tabelas escolhidas: periodo, aluno" in shown

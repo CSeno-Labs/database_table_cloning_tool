@@ -49,14 +49,10 @@ fi
 SYNC_DB_BIN="$HOME/.local/bin/sync-db"
 rm -f "$HOME/.local/bin/sinc-db" "$HOME/.local/bin/sinc-db.exe"
 if [ -x "$SYNC_DB_BIN" ]; then
-  "$SYNC_DB_BIN" init
+  "$SYNC_DB_BIN" init --quiet
 else
-  sync-db init
+  sync-db init --quiet
 fi
-
-echo ""
-echo "sync-db instalado. Rode: sync-db doctor"
-echo ""
 
 if [ "$WITH_CLIENT" = "ask" ]; then
   printf "Deseja instalar agora o cliente MariaDB portátil gerenciado? [s/N] "
@@ -71,6 +67,4 @@ if [ "$WITH_CLIENT" = "yes" ]; then
   else
     sync-db client install --yes
   fi
-else
-  echo "Cliente gerenciado não instalado. O sync tentará cliente do sistema e fallback Python."
 fi
