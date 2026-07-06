@@ -948,9 +948,43 @@ def profile_summary(config: dict, tag: str) -> str:
     return f"{tag} ({profile.get('host', '')}/{profile.get('database', '')})"
 
 
+def advanced_rows_text(insert_missing: bool, where_clause: str = "") -> str:
+    if insert_missing:
+        return "apenas novas da origem - mantém linhas existentes no destino e insere só PKs faltantes"
+    if where_clause:
+        return "TODAS - substitui as linhas encontradas pelo WHERE"
+    return "TODAS - substitui a tabela inteira"
+
+
+def advanced_mode_options(where_clause: str, insert_missing: bool) -> list[MenuOption]:
+    if where_clause or insert_missing:
+        return [MenuOption("python", "python", "obrigatório para WHERE/insert-missing nesta versão"), MenuOption("Voltar", "back")]
+    return [
+        MenuOption("auto", "auto", "recomendado"),
+        MenuOption("managed-dump", "managed-dump", "MariaDB gerenciado"),
+        MenuOption("system-dump", "system-dump", "cliente do sistema"),
+        MenuOption("python", "python", "fallback sem dump"),
+        MenuOption("Voltar", "back"),
+    ]
+
+
+def advanced_menu_options(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str) -> list[MenuOption]:
+    where_text = f"WHERE {where_clause}" if where_clause else "não"
+    return [
+        MenuOption("Banco de origem", "origin", profile_summary(config, origin)),
+        MenuOption("Banco de destino", "destination", profile_summary(config, destination)),
+        MenuOption("Escolher tabelas", "tables", ", ".join(tables) if tables else "não escolhido"),
+        MenuOption("Adicionar condicional (WHERE)", "where", where_text),
+        MenuOption("Quais linhas adicionar", "rows", advanced_rows_text(insert_missing, where_clause)),
+        MenuOption("Motor de sincronização", "mode", mode),
+        MenuOption("Executar sincronização avançada", "run"),
+        MenuOption("Voltar", "back"),
+    ]
+
+
 def format_advanced_sync_state(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str) -> str:
     where_text = f"WHERE {where_clause}" if where_clause else "não"
-    rows_text = "apenas novas da origem - mantém linhas existentes no destino e insere só PKs faltantes" if insert_missing else "TODAS - substitui a tabela inteira ou as linhas encontradas pelo WHERE"
+    rows_text = advanced_rows_text(insert_missing, where_clause)
     return "\n".join([
         "Banco de origem",
         f"    ┗> {profile_summary(config, origin)}",
@@ -979,18 +1013,8 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
         state = format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode)
         choice = select_option(
             "Sincronização avançada",
-            [
-                MenuOption("Banco de origem", "origin"),
-                MenuOption("Banco de destino", "destination"),
-                MenuOption("Escolher tabelas", "tables"),
-                MenuOption("Adicionar condicional (WHERE)", "where"),
-                MenuOption("Quais linhas adicionar", "rows"),
-                MenuOption("Motor de sincronização", "mode"),
-                MenuOption("Executar sincronização avançada", "run"),
-                MenuOption("Voltar", "back"),
-            ],
+            advanced_menu_options(config, origin, destination, tables, where_clause, insert_missing, mode),
             console=console,
-            footer=state,
         )
         if choice == "back":
             return 0
@@ -1008,6 +1032,8 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
         elif choice == "where":
             console.print(Panel(state, title="Sincronização avançada", border_style="cyan"))
             where_clause = normalize_where_clause(input("Digite a condição WHERE: "))
+            if where_clause and mode != "python":
+                mode = "python"
         elif choice == "rows":
             row_choice = select_option(
                 "Quais linhas adicionar",
@@ -1021,15 +1047,17 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
             )
             if row_choice != "back":
                 insert_missing = row_choice == "missing"
+                if insert_missing and mode != "python":
+                    mode = "python"
         elif choice == "mode":
             mode_choice = select_option(
                 "Motor de sincronização",
-                [MenuOption("python", "python", "obrigatório para WHERE/insert-missing nesta versão"), MenuOption("Voltar", "back")],
+                advanced_mode_options(where_clause, insert_missing),
                 console=console,
                 footer=state,
             )
             if mode_choice != "back":
-                mode = "python"
+                mode = mode_choice
         elif choice == "run":
             if not origin or not destination or not tables:
                 console.print("[red]ERRO[/] escolha origem, destino e tabelas antes de executar.")
@@ -1038,7 +1066,8 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
             console.print(Panel(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode), title="Resumo da sincronização avançada", border_style="cyan"))
             if not confirm("Continuar?"):
                 return 1
-            return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode="python", backup="none", where=where_clause, insert_missing=insert_missing, yes=True))
+            effective_mode = "python" if where_clause or insert_missing else mode
+            return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=effective_mode, backup="none", where=where_clause, insert_missing=insert_missing, yes=True))
 
 
 def interactive_sync(paths: AppPaths) -> int:

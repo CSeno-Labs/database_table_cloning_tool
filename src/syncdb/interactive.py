@@ -123,8 +123,10 @@ def select_option(
         for idx, option in enumerate(option_list):
             marker = "➤" if idx == index else " "
             style = "reverse bold" if idx == index else ""
-            suffix = f" — {option.description}" if option.description else ""
-            console.print(f"{marker} {idx + 1}. {option.label}{suffix}", style=style)
+            console.print(f"{marker} {idx + 1}. {option.label}", style=style)
+            if option.description:
+                console.print(f"      ┗> {option.description}", style=style)
+                console.print()
         if footer:
             console.print(f"\n[dim]{footer}[/]")
         key = key_reader()

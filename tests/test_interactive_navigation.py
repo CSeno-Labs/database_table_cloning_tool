@@ -47,6 +47,31 @@ def test_sync_context_text_matches_step_labels():
     )
 
 
+def test_select_option_tty_prints_option_descriptions_under_each_item(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    selected = select_option(
+        "Sincronização avançada",
+        [MenuOption("Banco de origem", "origin", "prod (host/db)"), MenuOption("Voltar", "back")],
+        key_reader=lambda: "enter",
+    )
+
+    shown = capsys.readouterr().out
+    assert selected == "origin"
+    assert "1. Banco de origem" in shown
+    assert "┗> prod (host/db)" in shown
+
+
+def test_advanced_mode_options_allow_dump_only_without_partial_sync():
+    from syncdb.cli import advanced_mode_options
+
+    all_modes = [option.value for option in advanced_mode_options(where_clause="", insert_missing=False)]
+    partial_modes = [option.value for option in advanced_mode_options(where_clause="ano >= 2026", insert_missing=False)]
+
+    assert all_modes[:4] == ["auto", "managed-dump", "system-dump", "python"]
+    assert partial_modes == ["python", "back"]
+
+
 def test_select_option_non_tty_prints_context_footer(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr("builtins.input", lambda prompt="": "1")
