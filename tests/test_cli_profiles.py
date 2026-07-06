@@ -176,6 +176,72 @@ def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Pat
     assert "Destino padrão: local" in shown
 
 
+def test_interactive_sync_pauses_after_showing_result(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["1", "1", "2", "periodo", "4", "n", "s", "6"])
+    prompts = []
+    pauses = []
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    def fake_run_python_sync(sync_config, table):
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python", rows=1)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
+    monkeypatch.setattr("syncdb.cli.pause_after_action", lambda: pauses.append(True))
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    assert pauses == [True]
+    assert "Criar backup da tabela destino antes de sobrescrever? [s/N] (Default: Não) " in prompts
+
+
+def test_interactive_backup_pauses_after_showing_result(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["2", "2", "periodo", "", "6"])
+    prompts = []
+    pauses = []
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    def fake_run_table_backup(db_config, table, backup_name):
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="backup", backup_table=backup_name)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.setattr("syncdb.cli.run_table_backup", fake_run_table_backup)
+    monkeypatch.setattr("syncdb.cli.pause_after_action", lambda: pauses.append(True))
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    assert pauses == [True]
+
+
+def test_db_add_charset_prompt_shows_allowed_values(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["novo", "Novo", "localhost", "3306", "user", "pass", "db", "", "s", "s", "n"])
+    prompts = []
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    assert main(["--config", str(config), "db", "add"]) == 0
+    assert "Charset [latin1] (latin1, utf8): " in prompts
+
+
 def test_bare_sync_db_opens_interactive_menu(monkeypatch, tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
     answers = iter(["0"])

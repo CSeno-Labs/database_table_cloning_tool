@@ -578,7 +578,7 @@ def cmd_db_add(paths: AppPaths, config: dict, tag: str | None, *, editing: bool 
         "user": ask("Usuário", current.get("user", "")),
         "password": ask("Senha", current.get("password", "")),
         "database": ask("Banco/database", current.get("database", "")),
-        "charset": ask("Charset", current.get("charset", "latin1")),
+        "charset": ask("Charset", current.get("charset", "latin1"), hint="latin1, utf8"),
         "allow_as_origin": confirm_default("Pode ser origem?", bool(current.get("allow_as_origin", True))),
         "allow_as_destination": confirm_default("Pode ser destino?", bool(current.get("allow_as_destination", True))),
     }
@@ -592,15 +592,17 @@ def cmd_db_add(paths: AppPaths, config: dict, tag: str | None, *, editing: bool 
     return 0
 
 
-def ask(label: str, default: str = "") -> str:
+def ask(label: str, default: str = "", *, hint: str = "") -> str:
     suffix = f" [{default}]" if default else ""
-    value = input(f"{label}{suffix}: ").strip()
+    hint_suffix = f" ({hint})" if hint else ""
+    value = input(f"{label}{suffix}{hint_suffix}: ").strip()
     return value if value else default
 
 
-def confirm_default(question: str, default: bool) -> bool:
+def confirm_default(question: str, default: bool, *, default_label: str = "") -> bool:
     suffix = "S/n" if default else "s/N"
-    answer = input(f"{question} [{suffix}] ").strip().lower()
+    label = f" {default_label}" if default_label else ""
+    answer = input(f"{question} [{suffix}]{label} ").strip().lower()
     if not answer:
         return default
     return answer in {"s", "sim", "y", "yes"}
@@ -763,8 +765,10 @@ def run_interactive_menu(paths: AppPaths) -> int:
             return last_status
         if choice == "sync":
             last_status = interactive_sync(paths)
+            pause_after_action()
         elif choice == "backup":
             last_status = interactive_backup(paths)
+            pause_after_action()
         elif choice == "db":
             last_status = interactive_db(paths)
         elif choice == "logs":
@@ -906,7 +910,7 @@ def interactive_sync(paths: AppPaths) -> int:
         return 0
     console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode=mode), title="Resumo da sincronização", border_style="cyan"))
     backup = "none"
-    if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False):
+    if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False, default_label="(Default: Não)"):
         backup = "keep" if confirm_default("Manter o backup no banco após sincronizar com sucesso?", False) else "temp"
     console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo={mode} | backup={backup}")
     if not confirm("Continuar?"):
