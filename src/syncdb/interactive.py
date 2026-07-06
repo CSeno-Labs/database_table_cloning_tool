@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -116,20 +117,22 @@ def select_option(
         return selected if selected is not None else "back"
 
     index = max(0, min(default_index, len(option_list) - 1))
-    while True:
-        console.clear()
-        console.print(f"[bold]{title}[/]")
-        console.print("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n")
-        for idx, option in enumerate(option_list):
-            marker = "➤" if idx == index else " "
-            style = "reverse bold" if idx == index else ""
-            console.print(f"{marker} {idx + 1}. {option.label}", style=style)
-            if option.description:
-                console.print(f"      ┗> {option.description}", style=style)
-                console.print()
-        if footer:
-            console.print(f"\n[dim]{footer}[/]")
-        key = key_reader()
-        index, selected = apply_menu_key(index, key, option_list)
-        if selected is not None:
-            return selected
+    screen = console.screen() if hasattr(console, "screen") else nullcontext()
+    with screen:
+        while True:
+            console.clear()
+            console.print(f"[bold]{title}[/]")
+            console.print("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n")
+            for idx, option in enumerate(option_list):
+                marker = "➤" if idx == index else " "
+                style = "reverse bold" if idx == index else ""
+                console.print(f"{marker} {idx + 1}. {option.label}", style=style)
+                if option.description:
+                    console.print(f"      ┗> {option.description}")
+                    console.print()
+            if footer:
+                console.print(f"\n[dim]{footer}[/]")
+            key = key_reader()
+            index, selected = apply_menu_key(index, key, option_list)
+            if selected is not None:
+                return selected

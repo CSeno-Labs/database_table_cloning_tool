@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--where", help="Condição WHERE para sincronização parcial (com ou sem a palavra WHERE)")
     sync.add_argument("--insert-missing", action="store_true", help="Insere apenas linhas da origem cuja chave primária ainda não existe no destino")
     sync.add_argument("-y", "--yes", action="store_true", help="Confirma avisos da sincronização avançada")
+    sync.add_argument("--dry-run", action="store_true", help="Mostra o que seria feito sem alterar o destino")
     sync.add_argument("--backup", nargs="?", const="temp", choices=["temp", "keep", "none"], help="Cria backup antes de sobrescrever; sem valor remove ao terminar com sucesso, use --backup keep para manter")
 
     backup = sub.add_parser("backup", help="Cria backups de tabelas no banco escolhido")
@@ -120,7 +121,7 @@ def normalize_legacy_args(argv: list[str]) -> list[str]:
     flags. Normalize those flags before argparse sees a subcommand position.
     """
     commands = {"init", "doctor", "sync", "backup", "tables", "config", "db", "client", "logs", "uninstall"}
-    legacy_flags = {"-t", "--tables", "-f", "--file", "-o", "--origin", "-d", "--destination", "--where", "--insert-missing", "-y", "--yes", "-s", "--showtables", "-l", "--logs"}
+    legacy_flags = {"-t", "--tables", "-f", "--file", "-o", "--origin", "-d", "--destination", "--where", "--insert-missing", "--dry-run", "-y", "--yes", "-s", "--showtables", "-l", "--logs"}
     if not any(arg in legacy_flags for arg in argv):
         return argv
 
@@ -334,12 +335,14 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     runtime_config.setdefault("sync", {})["backup_before_replace"] = backup_mode in {"temp", "keep"}
     where_clause = normalize_where_clause(getattr(args, "where", None))
     insert_missing = bool(getattr(args, "insert_missing", False))
+    dry_run = bool(getattr(args, "dry_run", False))
     advanced = bool(where_clause or insert_missing)
     console.print(f"Fluxo: [bold]{runtime_config['origem']['alias']}[/] → [bold]{runtime_config['destino']['alias']}[/]")
-    save_last_tables(paths, config, tables)
+    if not dry_run:
+        save_last_tables(paths, config, tables)
 
     if advanced:
-        return cmd_sync_advanced(paths, runtime_config, tables, where_clause, insert_missing, backup_mode, yes=bool(getattr(args, "yes", False)))
+        return cmd_sync_advanced(paths, runtime_config, tables, where_clause, insert_missing, backup_mode, yes=bool(getattr(args, "yes", False)), dry_run=dry_run)
 
     mode = args.mode or config.get("client", {}).get("mode", "auto")
     resolved = resolve_client(paths, mode, config["client"].get("preferred_source", "managed"), config["client"].get("vendor", "mariadb"))
@@ -348,6 +351,18 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print("Opções: sync-db client install | instalar cliente no sistema | --mode python")
         return 1
     console.print(f"Motor: [bold]{resolved.kind}[/] — {resolved.reason}")
+    if dry_run:
+        console.print("[yellow]DRY-RUN[/] Nenhuma alteração será feita no destino.")
+        preview = Table(title="Prévia da sincronização")
+        preview.add_column("Tabela")
+        preview.add_column("Ação")
+        preview.add_column("Motor")
+        preview.add_column("Backup")
+        for table_name in tables:
+            preview.add_row(table_name, "substituir tabela inteira", resolved.kind, backup_mode)
+        console.print(preview)
+        write_sync_log(paths, runtime_config, tables, resolved.kind, [], sync_type="dry_run")
+        return 0
 
     results = []
     for table in tables:
@@ -394,7 +409,7 @@ def print_sync_summary(results: list) -> None:
     console.print(table)
 
 
-def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], where_clause: str, insert_missing: bool, backup_mode: str, *, yes: bool = False) -> int:
+def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], where_clause: str, insert_missing: bool, backup_mode: str, *, yes: bool = False, dry_run: bool = False) -> int:
     sync_type = "where_insert_missing" if where_clause and insert_missing else "where_replace" if where_clause else "insert_missing"
     console.print(f"Motor: [bold]python/advanced[/] — sincronização avançada usa Python nesta versão.")
     if where_clause:
@@ -419,6 +434,10 @@ def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], 
     for result in preflight:
         preview.add_row(result.table, ", ".join(result.primary_key or []), "" if result.origin_matched_rows is None else str(result.origin_matched_rows))
     console.print(preview)
+    if dry_run:
+        console.print("[yellow]DRY-RUN[/] Nenhuma alteração será feita no destino.")
+        write_sync_log(paths, runtime_config, tables, "python/advanced", preflight, sync_type=f"dry_run_{sync_type}", where_clause=where_clause)
+        return 0
     needs_risk_confirmation = len(tables) > 1 and bool(where_clause or insert_missing)
     if needs_risk_confirmation and not yes:
         if not sys.stdin.isatty():
@@ -1010,7 +1029,6 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
     insert_missing = False
     mode = "python"
     while True:
-        state = format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode)
         choice = select_option(
             "Sincronização avançada",
             advanced_menu_options(config, origin, destination, tables, where_clause, insert_missing, mode),
@@ -1019,18 +1037,16 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
         if choice == "back":
             return 0
         if choice == "origin":
-            selected = choose_profile(config, "Sincronização avançada — origem", origin, footer=state)
+            selected = choose_profile(config, "Sincronização avançada — origem", origin)
             if selected != "back":
                 origin = selected
         elif choice == "destination":
-            selected = choose_profile(config, "Sincronização avançada — destino", destination, footer=state)
+            selected = choose_profile(config, "Sincronização avançada — destino", destination)
             if selected != "back":
                 destination = selected
         elif choice == "tables":
-            console.print(Panel(state, title="Sincronização avançada", border_style="cyan"))
             tables = parse_tables([input("Tabelas: ")])
         elif choice == "where":
-            console.print(Panel(state, title="Sincronização avançada", border_style="cyan"))
             where_clause = normalize_where_clause(input("Digite a condição WHERE: "))
             if where_clause and mode != "python":
                 mode = "python"
@@ -1043,7 +1059,6 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                     MenuOption("Voltar", "back"),
                 ],
                 console=console,
-                footer=state,
             )
             if row_choice != "back":
                 insert_missing = row_choice == "missing"
@@ -1054,7 +1069,6 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 "Motor de sincronização",
                 advanced_mode_options(where_clause, insert_missing),
                 console=console,
-                footer=state,
             )
             if mode_choice != "back":
                 mode = mode_choice
@@ -1063,7 +1077,8 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 console.print("[red]ERRO[/] escolha origem, destino e tabelas antes de executar.")
                 pause_after_action()
                 continue
-            console.print(Panel(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode), title="Resumo da sincronização avançada", border_style="cyan"))
+            console.print("\n[bold]Resumo da sincronização avançada[/]")
+            console.print(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode))
             if not confirm("Continuar?"):
                 return 1
             effective_mode = "python" if where_clause or insert_missing else mode

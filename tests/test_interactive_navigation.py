@@ -60,6 +60,30 @@ def test_select_option_tty_prints_option_descriptions_under_each_item(monkeypatc
     assert selected == "origin"
     assert "1. Banco de origem" in shown
     assert "┗> prod (host/db)" in shown
+    assert "— prod (host/db)" not in shown
+
+
+def test_select_option_tty_does_not_style_description_like_selected_item(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    calls = []
+
+    class FakeConsole:
+        def clear(self):
+            calls.append(("clear", None, None))
+
+        def print(self, text="", style=""):
+            calls.append(("print", str(text), style))
+
+    selected = select_option(
+        "Menu",
+        [MenuOption("Item", "item", "resposta"), MenuOption("Voltar", "back")],
+        console=FakeConsole(),
+        key_reader=lambda: "enter",
+    )
+
+    assert selected == "item"
+    assert ("print", "➤ 1. Item", "reverse bold") in calls
+    assert ("print", "      ┗> resposta", "") in calls
 
 
 def test_advanced_mode_options_allow_dump_only_without_partial_sync():
