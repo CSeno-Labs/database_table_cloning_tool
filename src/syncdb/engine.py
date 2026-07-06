@@ -181,10 +181,10 @@ def delete_existing_rows(config: dict[str, Any], table: str) -> None:
         conn.close()
 
 
-def backup_existing_table(config: dict[str, Any], table: str, *, suffix: str | None = None) -> str:
+def backup_existing_table(config: dict[str, Any], table: str, *, suffix: str | None = None, backup_name: str | None = None) -> str:
     suffix = suffix or datetime.now().strftime("%Y%m%d_%H%M%S")
     base = table.split(".")[-1]
-    backup_name = f"{base}_syncdb_backup_{suffix}"
+    backup_name = backup_name or f"{base}_syncdb_backup_{suffix}"
     conn = get_connection(config)
     try:
         cur = conn.cursor()
@@ -194,6 +194,24 @@ def backup_existing_table(config: dict[str, Any], table: str, *, suffix: str | N
         return backup_name
     finally:
         conn.close()
+
+
+def drop_table(config: dict[str, Any], table: str) -> None:
+    conn = get_connection(config)
+    try:
+        cur = conn.cursor()
+        cur.execute(f"DROP TABLE IF EXISTS {quote_identifier(table)}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def run_table_backup(config: dict[str, Any], table: str, backup_name: str) -> TableResult:
+    try:
+        created = backup_existing_table(config, table, backup_name=backup_name)
+        return TableResult(table=table, ok=True, engine="backup", stage="done", backup_table=created)
+    except Exception as exc:  # noqa: BLE001
+        return TableResult(table=table, ok=False, engine="backup", message=str(exc), stage="backup_table")
 
 
 def build_import_command(client: DumpClient, defaults_file: Path, *, database: str) -> list[str]:

@@ -99,7 +99,9 @@ Sincronizar tabelas:
 ```bash
 sync-db sync -t periodo aluno escola
 sync-db sync -t periodo -o prod -d local
-sync-db sync -t periodo -o prod -d local --backup
+sync-db sync -t periodo -o prod -d local --backup        # backup temporário: remove se concluir com sucesso
+sync-db sync -t periodo -o prod -d local --backup keep   # mantém backup no banco
+sync-db backup -t periodo aluno -d local -y
 sync-db --version
 ```
 
@@ -113,10 +115,11 @@ Rodar só `sync-db` abre o menu interativo com setas:
 
 ```text
 1 - Sincronizar tabelas
-2 - Bancos / conexões
-3 - Logs
-4 - Mais
-5 - Sair
+2 - Backup de tabelas
+3 - Bancos / conexões
+4 - Logs
+5 - Mais
+6 - Sair
 ```
 
 Use ↑/↓ para navegar, Enter para selecionar e Esc/← para voltar.

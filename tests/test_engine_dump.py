@@ -1,7 +1,15 @@
 from pathlib import Path
 
 from syncdb.clients import ClientSource, DumpClient
-from syncdb.engine import TableResult, backup_existing_table, build_dump_command, build_import_command, delete_existing_rows
+from syncdb.engine import (
+    TableResult,
+    backup_existing_table,
+    build_dump_command,
+    build_import_command,
+    delete_existing_rows,
+    drop_table,
+    run_table_backup,
+)
 
 
 def test_table_result_has_stage_and_backup_metadata():
@@ -125,3 +133,38 @@ def test_backup_existing_table_creates_timestamped_copy(monkeypatch):
     assert "DROP TABLE IF EXISTS `periodo_syncdb_backup_20260706_120000`" in executed
     assert "CREATE TABLE `periodo_syncdb_backup_20260706_120000` AS SELECT * FROM `periodo`" in executed
     assert "COMMIT" in executed
+
+
+def test_drop_table_drops_backup_table(monkeypatch):
+    executed = []
+
+    class FakeCursor:
+        def execute(self, sql):
+            executed.append(sql)
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            executed.append("COMMIT")
+
+        def close(self):
+            executed.append("CLOSE")
+
+    monkeypatch.setattr("syncdb.engine.get_connection", lambda config: FakeConnection())
+
+    drop_table({"database": "local"}, "periodo_syncdb_backup_1")
+
+    assert executed == ["DROP TABLE IF EXISTS `periodo_syncdb_backup_1`", "COMMIT", "CLOSE"]
+
+
+def test_run_table_backup_uses_explicit_backup_name(monkeypatch):
+    calls = []
+    monkeypatch.setattr("syncdb.engine.backup_existing_table", lambda config, table, backup_name=None: calls.append((table, backup_name)) or backup_name)
+
+    result = run_table_backup({"database": "local"}, "periodo", "periodo_bkp")
+
+    assert result.ok is True
+    assert result.backup_table == "periodo_bkp"
+    assert calls == [("periodo", "periodo_bkp")]

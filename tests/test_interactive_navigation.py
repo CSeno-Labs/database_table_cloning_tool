@@ -33,6 +33,20 @@ def test_ctrl_c_character_raises_keyboard_interrupt():
         raise AssertionError("Ctrl+C character should raise KeyboardInterrupt")
 
 
+def test_sync_context_text_matches_step_labels():
+    from syncdb.cli import format_sync_context
+
+    assert format_sync_context(step="origin") == "Escolha o banco de origem"
+    assert format_sync_context(origin="prod", step="destination") == "Origem escolhida: prod\nEscolha o banco de destino"
+    assert format_sync_context(origin="prod", destination="local", step="tables") == (
+        "Origem escolhida: prod\nDestino escolhido: local\nEscolha as tabelas que serão sincronizadas"
+    )
+    assert format_sync_context(origin="prod", destination="local", tables=["periodo"], step="mode") == (
+        "Origem escolhida: prod\nDestino escolhido: local\n"
+        "Tabelas escolhidas: periodo\nEscolha o motor"
+    )
+
+
 def test_select_option_non_tty_prints_context_footer(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr("builtins.input", lambda prompt="": "1")

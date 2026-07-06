@@ -16,7 +16,7 @@ from rich.table import Table
 from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
 from .db import test_connection
-from .engine import run_dump_sync, run_python_sync
+from .engine import drop_table, run_dump_sync, run_python_sync, run_table_backup
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
@@ -42,7 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("-d", "--destination", help="Tag do banco de destino")
     sync.add_argument("--last", action="store_true", help="Usa as últimas tabelas sincronizadas")
     sync.add_argument("--mode", choices=["auto", "dump", "managed-dump", "system-dump", "python"], help="Motor de sincronização")
-    sync.add_argument("--backup", nargs="?", const="keep", choices=["keep", "none"], help="Cria backup da tabela destino antes de sobrescrever (use --backup ou --backup keep)")
+    sync.add_argument("--backup", nargs="?", const="temp", choices=["temp", "keep", "none"], help="Cria backup antes de sobrescrever; sem valor remove ao terminar com sucesso, use --backup keep para manter")
+
+    backup = sub.add_parser("backup", help="Cria backups de tabelas no banco escolhido")
+    add_table_args(backup)
+    backup.add_argument("-d", "--destination", help="Tag do banco onde o backup será criado")
+    backup.add_argument("-y", "--yes", action="store_true", help="Usa nomes sugeridos sem perguntar")
 
     tables = sub.add_parser("tables", help="Lista tabelas identificadas")
     tables.add_argument("-t", "--tables", nargs="+", help="Tabelas inline")
@@ -111,7 +116,7 @@ def normalize_legacy_args(argv: list[str]) -> list[str]:
     The new CLI is subcommand-based, but existing users naturally try the old
     flags. Normalize those flags before argparse sees a subcommand position.
     """
-    commands = {"init", "doctor", "sync", "tables", "config", "db", "client", "logs", "uninstall"}
+    commands = {"init", "doctor", "sync", "backup", "tables", "config", "db", "client", "logs", "uninstall"}
     legacy_flags = {"-t", "--tables", "-f", "--file", "-o", "--origin", "-d", "--destination", "-s", "--showtables", "-l", "--logs"}
     if not any(arg in legacy_flags for arg in argv):
         return argv
@@ -178,6 +183,8 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
         return cmd_doctor(paths)
     if args.command == "sync":
         return cmd_sync(paths, args)
+    if args.command == "backup":
+        return cmd_backup(paths, args)
     if args.command == "tables":
         return cmd_tables(args)
     if args.command == "config":
@@ -287,6 +294,27 @@ def read_last_tables(paths: AppPaths, config: dict) -> list[str]:
     return parse_tables_file(path)
 
 
+def suggested_backup_name(table: str, suffix: str | None = None) -> str:
+    suffix = suffix or datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{table.split('.')[-1]}_syncdb_backup_{suffix}"
+
+
+def cleanup_temporary_backups(runtime_config: dict, backup_mode: str, results: list) -> None:
+    if backup_mode != "temp":
+        return
+    destino = runtime_config.get("destino", {})
+    for result in results:
+        if result.ok and result.backup_table:
+            try:
+                drop_table(destino, result.backup_table)
+                result.message = (result.message + " " if result.message else "") + "backup temporário removido"
+                result.backup_table = None
+            except Exception as exc:  # noqa: BLE001
+                result.ok = False
+                result.stage = "cleanup_backup"
+                result.message = f"Sync concluiu, mas falhou ao remover backup temporário {result.backup_table}: {exc}"
+
+
 def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     config = load_config(paths)
     tables = read_last_tables(paths, config) if getattr(args, "last", False) else collect_tables(args, config)
@@ -300,7 +328,7 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print(f"[red]ERRO[/] {exc}")
         return 2
     backup_mode = getattr(args, "backup", None) or "none"
-    runtime_config.setdefault("sync", {})["backup_before_replace"] = backup_mode == "keep"
+    runtime_config.setdefault("sync", {})["backup_before_replace"] = backup_mode in {"temp", "keep"}
     console.print(f"Fluxo: [bold]{runtime_config['origem']['alias']}[/] → [bold]{runtime_config['destino']['alias']}[/]")
     save_last_tables(paths, config, tables)
 
@@ -328,6 +356,8 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
             stage = f" etapa={result.stage}" if result.stage else ""
             console.print(f"[red]FALHOU[/] {table}{stage}: {result.message}")
 
+    cleanup_temporary_backups(runtime_config, backup_mode, results)
+
     table = Table(title="Resumo")
     table.add_column("Tabela")
     table.add_column("Status")
@@ -340,6 +370,41 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     console.print(table)
     write_sync_log(paths, runtime_config, tables, resolved.kind, results)
     return 0 if all(r.ok for r in results) else 1
+
+
+def cmd_backup(paths: AppPaths, args: argparse.Namespace) -> int:
+    config = load_config(paths)
+    tables = collect_tables(args, config)
+    if not tables:
+        console.print("[red]ERRO[/] Nenhuma tabela informada. Use -t ou -f.")
+        return 2
+    tag = getattr(args, "destination", None) or config.get("defaults", {}).get("destination")
+    if tag not in config.get("profiles", {}):
+        console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+        return 2
+    db_config = dict(config["profiles"][tag])
+    db_config["alias"] = tag
+    suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results = []
+    console.print(f"Banco: [bold]{tag}[/]")
+    for table in tables:
+        suggested = suggested_backup_name(table, suffix)
+        backup_name = suggested if getattr(args, "yes", False) else ask(f"Nome do backup para {table}", suggested)
+        with console.status(f"Criando backup {backup_name}...", spinner="dots"):
+            result = run_table_backup(db_config, table, backup_name)
+        results.append(result)
+        if result.ok:
+            console.print(f"[green]OK[/] {table} → {result.backup_table}")
+        else:
+            console.print(f"[red]FALHOU[/] {table}: {result.message}")
+    table_out = Table(title="Backups")
+    table_out.add_column("Tabela")
+    table_out.add_column("Status")
+    table_out.add_column("Backup")
+    for result in results:
+        table_out.add_row(result.table, "OK" if result.ok else "FALHOU", result.backup_table or "")
+    console.print(table_out)
+    return 0 if all(result.ok for result in results) else 1
 
 
 def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list) -> Path:
@@ -685,6 +750,7 @@ def run_interactive_menu(paths: AppPaths) -> int:
             "Menu sync-db",
             [
                 MenuOption("Sincronizar tabelas", "sync"),
+                MenuOption("Backup de tabelas", "backup"),
                 MenuOption("Bancos / conexões", "db"),
                 MenuOption("Logs", "logs"),
                 MenuOption("Mais", "more"),
@@ -697,6 +763,8 @@ def run_interactive_menu(paths: AppPaths) -> int:
             return last_status
         if choice == "sync":
             last_status = interactive_sync(paths)
+        elif choice == "backup":
+            last_status = interactive_backup(paths)
         elif choice == "db":
             last_status = interactive_db(paths)
         elif choice == "logs":
@@ -738,8 +806,8 @@ def interactive_more(paths: AppPaths) -> int:
             return status
 
 
-def format_sync_context(*, origin: str = "", destination: str = "", tables: list[str] | None = None, mode: str = "") -> str:
-    lines = ["Você está configurando uma sincronização de tabelas."]
+def format_sync_context(*, origin: str = "", destination: str = "", tables: list[str] | None = None, mode: str = "", step: str = "") -> str:
+    lines: list[str] = []
     if origin:
         lines.append(f"Origem escolhida: {origin}")
     if destination:
@@ -748,19 +816,57 @@ def format_sync_context(*, origin: str = "", destination: str = "", tables: list
         lines.append(f"Tabelas escolhidas: {', '.join(tables)}")
     if mode:
         lines.append(f"Motor escolhido: {mode}")
+    step_text = {
+        "origin": "Escolha o banco de origem",
+        "destination": "Escolha o banco de destino",
+        "tables": "Escolha as tabelas que serão sincronizadas",
+        "mode": "Escolha o motor",
+    }.get(step, "")
+    if step_text:
+        lines.append(step_text)
     return "\n".join(lines)
+
+
+def interactive_backup(paths: AppPaths) -> int:
+    config = load_config(paths)
+    destination = choose_profile(config, "Backup de tabelas", config.get("defaults", {}).get("destination", ""), footer="Escolha o banco onde os backups serão criados")
+    if destination == "back":
+        return 0
+    console.print(Panel(f"Banco escolhido: {destination}\nDigite as tabelas que serão copiadas para backup.", title="Backup de tabelas", border_style="cyan"))
+    tables = parse_tables([input("Tabelas: ")])
+    if not tables:
+        console.print("[red]ERRO[/] Nenhuma tabela informada.")
+        return 2
+    console.print("Nomes sugeridos dos backups. Pressione Enter para confirmar ou edite o nome.")
+    suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+    selected_names = []
+    for table in tables:
+        selected_names.append(ask(f"Backup para {table}", suggested_backup_name(table, suffix)))
+    args = argparse.Namespace(tables=tables, file=None, destination=destination, yes=True)
+    original = suggested_backup_name
+    names_iter = iter(selected_names)
+    try:
+        globals()["suggested_backup_name"] = lambda table, suffix=None: next(names_iter)
+        return cmd_backup(paths, args)
+    finally:
+        globals()["suggested_backup_name"] = original
 
 
 def interactive_sync(paths: AppPaths) -> int:
     config = load_config(paths)
-    origin = choose_profile(config, "Sincronizar tabelas — escolha a origem", config.get("defaults", {}).get("origin", ""))
+    origin = choose_profile(
+        config,
+        "Sincronizando tabelas",
+        config.get("defaults", {}).get("origin", ""),
+        footer=format_sync_context(step="origin"),
+    )
     if origin == "back":
         return 0
     destination = choose_profile(
         config,
-        "Sincronizar tabelas — escolha o destino",
+        "Sincronizando tabelas",
         config.get("defaults", {}).get("destination", ""),
-        footer=format_sync_context(origin=origin),
+        footer=format_sync_context(origin=origin, step="destination"),
     )
     if destination == "back":
         return 0
@@ -768,24 +874,24 @@ def interactive_sync(paths: AppPaths) -> int:
     table_source = "manual"
     if last:
         table_source = select_option(
-            "Sincronizar tabelas — escolha as tabelas",
+            "Sincronizando tabelas",
             [
                 MenuOption(f"Usar últimas ({', '.join(last)})", "last"),
                 MenuOption("Digitar tabelas", "manual"),
                 MenuOption("Voltar", "back"),
             ],
             console=console,
-            footer=format_sync_context(origin=origin, destination=destination),
+            footer=format_sync_context(origin=origin, destination=destination, step="tables"),
         )
     if table_source == "back":
         return 0
     if table_source == "last":
         tables = last
     else:
-        console.print(Panel(format_sync_context(origin=origin, destination=destination), title="Sincronizar tabelas", border_style="cyan"))
+        console.print(Panel(format_sync_context(origin=origin, destination=destination, step="tables"), title="Sincronizando tabelas", border_style="cyan"))
         tables = parse_tables([input("Tabelas: ")])
     mode = select_option(
-        "Sincronizar tabelas — escolha o motor",
+        "Sincronizando tabelas",
         [
             MenuOption("auto", "auto", "recomendado"),
             MenuOption("managed-dump", "managed-dump", "MariaDB gerenciado"),
@@ -794,12 +900,14 @@ def interactive_sync(paths: AppPaths) -> int:
             MenuOption("Voltar", "back"),
         ],
         console=console,
-        footer=format_sync_context(origin=origin, destination=destination, tables=tables),
+        footer=format_sync_context(origin=origin, destination=destination, tables=tables, step="mode"),
     )
     if mode == "back":
         return 0
     console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode=mode), title="Resumo da sincronização", border_style="cyan"))
-    backup = "keep" if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False) else "none"
+    backup = "none"
+    if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False):
+        backup = "keep" if confirm_default("Manter o backup no banco após sincronizar com sucesso?", False) else "temp"
     console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo={mode} | backup={backup}")
     if not confirm("Continuar?"):
         return 1

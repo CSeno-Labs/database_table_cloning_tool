@@ -82,14 +82,74 @@ def test_sync_backup_flag_sets_runtime_config(monkeypatch, tmp_path: Path):
         seen.append(sync_config["sync"].get("backup_before_replace"))
         from syncdb.engine import TableResult
 
-        return TableResult(table=table, ok=True, engine="python", rows=1)
+        return TableResult(table=table, ok=True, engine="python", rows=1, backup_table="periodo_bkp")
 
+    dropped = []
     monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
+    monkeypatch.setattr("syncdb.cli.drop_table", lambda config, table: dropped.append(table))
 
     code = main(["--config", str(config), "sync", "-t", "periodo", "--mode", "python", "--backup"])
 
     assert code == 0
     assert seen == [True]
+    assert dropped == ["periodo_bkp"]
+
+
+def test_sync_backup_keep_does_not_drop_successful_backup(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+
+    def fake_run_python_sync(sync_config, table):
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python", rows=1, backup_table="periodo_bkp")
+
+    dropped = []
+    monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
+    monkeypatch.setattr("syncdb.cli.drop_table", lambda config, table: dropped.append(table))
+
+    code = main(["--config", str(config), "sync", "-t", "periodo", "--mode", "python", "--backup", "keep"])
+
+    assert code == 0
+    assert dropped == []
+
+
+def test_sync_without_backup_does_not_enable_backup(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    seen = []
+
+    def fake_run_python_sync(sync_config, table):
+        seen.append(sync_config["sync"].get("backup_before_replace"))
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python", rows=1)
+
+    monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
+
+    code = main(["--config", str(config), "sync", "-t", "periodo", "--mode", "python"])
+
+    assert code == 0
+    assert seen == [False]
+
+
+def test_backup_command_uses_suggested_names_with_yes(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    calls = []
+
+    def fake_run_table_backup(db_config, table, backup_name):
+        calls.append((db_config["alias"], table, backup_name))
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="backup", backup_table=backup_name)
+
+    monkeypatch.setattr("syncdb.cli.run_table_backup", fake_run_table_backup)
+
+    code = main(["--config", str(config), "backup", "-t", "periodo", "aluno", "-d", "local", "-y"])
+
+    assert code == 0
+    assert len(calls) == 2
+    assert calls[0][0:2] == ("local", "periodo")
+    assert calls[0][2].startswith("periodo_syncdb_backup_")
+    assert calls[1][0:2] == ("local", "aluno")
 
 
 def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys):
@@ -105,7 +165,7 @@ def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys
 
 def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["4", "1", "1", "2"])
+    answers = iter(["5", "1", "1", "2"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     code = main(["--config", str(config)])
