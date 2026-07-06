@@ -152,6 +152,65 @@ def test_backup_command_uses_suggested_names_with_yes(monkeypatch, tmp_path: Pat
     assert calls[1][0:2] == ("local", "aluno")
 
 
+def test_sync_where_uses_advanced_python_engine_and_yes(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    calls = []
+
+    def fake_run_python_advanced_sync(sync_config, table, *, where_clause, insert_missing):
+        calls.append((table, where_clause, insert_missing))
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python/advanced", rows=2, sync_type="where_replace", primary_key=["id"], origin_matched_rows=2, inserted_rows=2, deleted_rows=2)
+
+    monkeypatch.setattr("syncdb.cli.run_python_advanced_sync", fake_run_python_advanced_sync)
+    monkeypatch.setattr("syncdb.cli.preflight_advanced_sync", lambda config, tables, where_clause, insert_missing: [])
+
+    code = main(["--config", str(config), "sync", "-t", "aluno", "--where", "WHERE ano >= 2026", "-y"])
+
+    assert code == 0
+    assert calls == [("aluno", "ano >= 2026", False)]
+
+
+def test_sync_where_preflight_failure_aborts_before_any_table(monkeypatch, tmp_path: Path, capsys):
+    config = tmp_path / "config" / "config.json"
+    calls = []
+
+    from syncdb.engine import TableResult
+
+    monkeypatch.setattr("syncdb.cli.run_python_advanced_sync", lambda *a, **kw: calls.append((a, kw)))
+    monkeypatch.setattr(
+        "syncdb.cli.preflight_advanced_sync",
+        lambda config, tables, where_clause, insert_missing: [TableResult(table="periodo", ok=False, engine="python/advanced", stage="validate_where", message="Unknown column 'idescola'")],
+    )
+
+    code = main(["--config", str(config), "sync", "-t", "aluno", "periodo", "--where", "idescola = 123", "-y"])
+
+    assert code == 2
+    assert calls == []
+    shown = capsys.readouterr().out
+    assert "Nenhuma tabela foi sincronizada" in shown
+    assert "periodo" in shown
+
+
+def test_sync_insert_missing_sets_advanced_mode(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    calls = []
+
+    def fake_run_python_advanced_sync(sync_config, table, *, where_clause, insert_missing):
+        calls.append((table, where_clause, insert_missing))
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python/advanced", rows=1, sync_type="insert_missing", primary_key=["id"], inserted_rows=1, skipped_existing_rows=3)
+
+    monkeypatch.setattr("syncdb.cli.run_python_advanced_sync", fake_run_python_advanced_sync)
+    monkeypatch.setattr("syncdb.cli.preflight_advanced_sync", lambda config, tables, where_clause, insert_missing: [])
+
+    code = main(["--config", str(config), "sync", "-t", "aluno", "--insert-missing", "-y"])
+
+    assert code == 0
+    assert calls == [("aluno", "", True)]
+
+
 def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
     main(["--config", str(config), "init"])
@@ -165,7 +224,7 @@ def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys
 
 def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["5", "1", "1", "2"])
+    answers = iter(["6", "1", "1", "2"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     code = main(["--config", str(config)])
@@ -178,7 +237,7 @@ def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Pat
 
 def test_interactive_sync_pauses_after_showing_result(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["1", "1", "2", "periodo", "4", "n", "s", "6"])
+    answers = iter(["1", "1", "2", "periodo", "n", "s", "7"])
     prompts = []
     pauses = []
 
@@ -204,7 +263,7 @@ def test_interactive_sync_pauses_after_showing_result(monkeypatch, tmp_path: Pat
 
 def test_interactive_backup_pauses_after_showing_result(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["2", "2", "periodo", "", "6"])
+    answers = iter(["3", "2", "periodo", "", "7"])
     prompts = []
     pauses = []
 

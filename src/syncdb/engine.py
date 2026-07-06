@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -23,10 +24,137 @@ class TableResult:
     message: str = ""
     stage: str = ""
     backup_table: str | None = None
+    sync_type: str = "full_replace"
+    primary_key: list[str] | None = None
+    origin_matched_rows: int | None = None
+    deleted_rows: int | None = None
+    inserted_rows: int | None = None
+    skipped_existing_rows: int | None = None
 
 
 class SyncError(RuntimeError):
     pass
+
+
+DANGEROUS_WHERE_PATTERNS = [
+    ";",
+    "--",
+    "/*",
+    "*/",
+    r"\bDELETE\b",
+    r"\bDROP\b",
+    r"\bUPDATE\b",
+    r"\bINSERT\b",
+    r"\bALTER\b",
+    r"\bCREATE\b",
+    r"\bTRUNCATE\b",
+]
+
+
+def normalize_where_clause(where_clause: str | None) -> str:
+    where = (where_clause or "").strip()
+    if where.lower().startswith("where "):
+        where = where[6:].strip()
+    return where
+
+
+def validate_where_clause(where_clause: str | None) -> str:
+    where = normalize_where_clause(where_clause)
+    if not where:
+        return ""
+    upper = where.upper()
+    for pattern in DANGEROUS_WHERE_PATTERNS:
+        if pattern.startswith(r"\b"):
+            if re.search(pattern, upper):
+                token = pattern.replace("\\b", "")
+                raise ValueError(f"WHERE contém comando não permitido: {token}")
+        elif pattern in where:
+            raise ValueError(f"WHERE contém token não permitido: {pattern}")
+    return where
+
+
+def chunked(items: list[tuple], size: int):
+    for start in range(0, len(items), max(1, size)):
+        yield items[start : start + max(1, size)]
+
+
+def build_key_predicate(primary_key: list[str], keys: list[tuple]) -> tuple[str, list[Any]]:
+    if not keys:
+        return "0=1", []
+    clauses = []
+    params: list[Any] = []
+    for key in keys:
+        values = tuple(key) if isinstance(key, tuple) else (key,)
+        if len(values) != len(primary_key):
+            raise SyncError("Quantidade de valores da chave não bate com a chave primária.")
+        parts = []
+        for column, value in zip(primary_key, values):
+            parts.append(f"{quote_identifier(column)} = %s")
+            params.append(value)
+        clauses.append("(" + " AND ".join(parts) + ")" if len(parts) > 1 else parts[0])
+    return "(" + " OR ".join(clauses) + ")", params
+
+
+def get_primary_key(config: dict[str, Any], table: str) -> list[str]:
+    conn = get_connection(config)
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(f"SHOW KEYS FROM {quote_identifier(table)} WHERE Key_name = 'PRIMARY'")
+        rows = cur.fetchall()
+        rows.sort(key=lambda row: int(row.get("Seq_in_index", 0)))
+        primary_key = [row["Column_name"] for row in rows]
+        if not primary_key:
+            raise SyncError(f"A tabela {table} não possui chave primária. Sincronização parcial precisa de chave primária para identificar linhas.")
+        return primary_key
+    finally:
+        conn.close()
+
+
+def validate_where_for_table(config: dict[str, Any], table: str, primary_key: list[str], where_clause: str) -> int:
+    where = validate_where_clause(where_clause)
+    columns = ", ".join(quote_identifier(col) for col in primary_key)
+    sql = f"SELECT {columns} FROM {quote_identifier(table)}"
+    if where:
+        sql += f" WHERE {where}"
+    sql += " LIMIT 1"
+    count_sql = f"SELECT COUNT(*) FROM {quote_identifier(table)}"
+    if where:
+        count_sql += f" WHERE {where}"
+    conn = get_connection(config)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        cur.fetchone()
+        cur.execute(count_sql)
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    finally:
+        conn.close()
+
+
+def preflight_advanced_sync(config: dict[str, Any], tables: list[str], where_clause: str = "", insert_missing: bool = False) -> list[TableResult]:
+    origem = config["origem"]
+    where = validate_where_clause(where_clause)
+    results: list[TableResult] = []
+    for table in tables:
+        try:
+            primary_key = get_primary_key(origem, table)
+            matched = validate_where_for_table(origem, table, primary_key, where)
+            results.append(TableResult(table=table, ok=True, engine="python/advanced", stage="preflight", sync_type=advanced_sync_type(where, insert_missing), primary_key=primary_key, origin_matched_rows=matched))
+        except Exception as exc:  # noqa: BLE001
+            results.append(TableResult(table=table, ok=False, engine="python/advanced", stage="validate_where" if where else "inspect_primary_key", message=str(exc), sync_type=advanced_sync_type(where, insert_missing)))
+    return results
+
+
+def advanced_sync_type(where_clause: str, insert_missing: bool) -> str:
+    where = bool(normalize_where_clause(where_clause))
+    if where and insert_missing:
+        return "where_insert_missing"
+    if where:
+        return "where_replace"
+    if insert_missing:
+        return "insert_missing"
+    return "full_replace"
 
 
 def table_exists(config: dict[str, Any], table: str) -> bool:
@@ -271,6 +399,116 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
                 path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+def select_keys(config: dict[str, Any], table: str, primary_key: list[str], where_clause: str = "") -> list[tuple]:
+    where = validate_where_clause(where_clause)
+    columns = ", ".join(quote_identifier(col) for col in primary_key)
+    sql = f"SELECT {columns} FROM {quote_identifier(table)}"
+    if where:
+        sql += f" WHERE {where}"
+    conn = get_connection(config)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        return [tuple(row if isinstance(row, (tuple, list)) else (row,)) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def select_existing_keys(config: dict[str, Any], table: str, primary_key: list[str], keys: list[tuple], batch_size: int) -> set[tuple]:
+    if not keys:
+        return set()
+    found: set[tuple] = set()
+    conn = get_connection(config)
+    try:
+        cur = conn.cursor()
+        columns = ", ".join(quote_identifier(col) for col in primary_key)
+        for batch in chunked(keys, batch_size):
+            predicate, params = build_key_predicate(primary_key, batch)
+            cur.execute(f"SELECT {columns} FROM {quote_identifier(table)} WHERE {predicate}", params)
+            for row in cur.fetchall():
+                found.add(tuple(row if isinstance(row, (tuple, list)) else (row,)))
+    finally:
+        conn.close()
+    return found
+
+
+def run_python_advanced_sync(config: dict[str, Any], table: str, *, where_clause: str = "", insert_missing: bool = False) -> TableResult:
+    origem = config["origem"]
+    destino = config["destino"]
+    sync_cfg = config.get("sync", {})
+    batch_size = int(sync_cfg.get("batch_size", 1000))
+    where = validate_where_clause(where_clause)
+    sync_type = advanced_sync_type(where, insert_missing)
+    stage = "inspect_primary_key"
+    backup_table: str | None = None
+    primary_key: list[str] = []
+    try:
+        primary_key = get_primary_key(origem, table)
+        source_columns = get_columns(origem, table)
+        if not source_columns:
+            raise SyncError(f"Tabela {table} não encontrada na origem.")
+        create_sql = sanitize_create_table(get_create_table(origem, table))
+        stage = "ensure_dest_structure"
+        ensure_structure(destino, table, create_sql, source_columns, create_missing=bool(sync_cfg.get("create_missing_tables", True)), add_missing_columns=bool(sync_cfg.get("add_missing_columns", True)))
+        stage = "read_source_keys"
+        source_keys = select_keys(origem, table, primary_key, where)
+        if not source_keys:
+            return TableResult(table=table, ok=True, engine="python/advanced", rows=0, stage="done", sync_type=sync_type, primary_key=primary_key, origin_matched_rows=0, deleted_rows=0, inserted_rows=0, skipped_existing_rows=0)
+        keys_to_insert = source_keys
+        skipped_existing = 0
+        if insert_missing:
+            stage = "read_dest_keys"
+            existing = select_existing_keys(destino, table, primary_key, source_keys, batch_size)
+            stage = "filter_missing_keys"
+            keys_to_insert = [key for key in source_keys if key not in existing]
+            skipped_existing = len(source_keys) - len(keys_to_insert)
+        if table_exists(destino, table) and sync_cfg.get("backup_before_replace"):
+            stage = "backup_dest"
+            backup_table = backup_existing_table(destino, table)
+
+        columns = list(source_columns.keys())
+        quoted_cols = ", ".join(quote_identifier(col) for col in columns)
+        placeholders = ", ".join(["%s"] * len(columns))
+        insert_sql = f"INSERT INTO {quote_identifier(table)} ({quoted_cols}) VALUES ({placeholders})"
+        src = get_connection(origem)
+        dst = get_connection(destino)
+        rows_inserted = 0
+        rows_deleted = 0
+        dst_cur = None
+        try:
+            src_cur = src.cursor()
+            dst_cur = dst.cursor()
+            dst_cur.execute("SET FOREIGN_KEY_CHECKS=0")
+            if not insert_missing:
+                stage = "delete_dest_keys"
+                for batch in chunked(source_keys, batch_size):
+                    predicate, params = build_key_predicate(primary_key, batch)
+                    dst_cur.execute(f"DELETE FROM {quote_identifier(table)} WHERE {predicate}", params)
+                    rows_deleted += int(getattr(dst_cur, "rowcount", 0) or 0)
+            stage = "copy_missing_rows" if insert_missing else "copy_rows"
+            for batch in chunked(keys_to_insert, batch_size):
+                predicate, params = build_key_predicate(primary_key, batch)
+                src_cur.execute(f"SELECT {quoted_cols} FROM {quote_identifier(table)} WHERE {predicate}", params)
+                rows = src_cur.fetchall()
+                if rows:
+                    dst_cur.executemany(insert_sql, rows)
+                    rows_inserted += len(rows)
+            dst.commit()
+            stage = "restore_fk"
+        finally:
+            if dst_cur is not None:
+                try:
+                    dst_cur.execute("SET FOREIGN_KEY_CHECKS=1")
+                    dst.commit()
+                except Exception:
+                    pass
+            src.close()
+            dst.close()
+        return TableResult(table=table, ok=True, engine="python/advanced", rows=rows_inserted, stage="done", backup_table=backup_table, sync_type=sync_type, primary_key=primary_key, origin_matched_rows=len(source_keys), deleted_rows=rows_deleted, inserted_rows=rows_inserted, skipped_existing_rows=skipped_existing)
+    except Exception as exc:  # noqa: BLE001
+        return TableResult(table=table, ok=False, engine="python/advanced", message=str(exc), stage=stage, backup_table=backup_table, sync_type=sync_type, primary_key=primary_key or None)
 
 
 def run_python_sync(config: dict[str, Any], table: str) -> TableResult:

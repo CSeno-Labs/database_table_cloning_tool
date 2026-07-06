@@ -6,11 +6,41 @@ from syncdb.engine import (
     backup_existing_table,
     build_dump_command,
     build_import_command,
+    build_key_predicate,
     delete_existing_rows,
     drop_table,
+    normalize_where_clause,
     run_table_backup,
+    validate_where_clause,
 )
 
+
+def test_where_clause_normalization_accepts_with_or_without_where():
+    assert normalize_where_clause("ano >= 2026") == "ano >= 2026"
+    assert normalize_where_clause("WHERE ano >= 2026") == "ano >= 2026"
+    assert normalize_where_clause("  where idescola = 123  ") == "idescola = 123"
+
+
+def test_where_clause_validation_blocks_dangerous_tokens():
+    validate_where_clause("idescola IN (SELECT id FROM escola WHERE idsme = 92)")
+
+    for bad in ["1=1; DROP TABLE aluno", "id=1 -- comentario", "id=1 /* x */", "UPDATE aluno SET nome='x'"]:
+        try:
+            validate_where_clause(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"WHERE perigoso deveria falhar: {bad}")
+
+
+def test_build_key_predicate_supports_simple_and_composite_primary_keys():
+    sql, params = build_key_predicate(["id"], [(1,), (2,)])
+    assert sql == "(`id` = %s OR `id` = %s)"
+    assert params == [1, 2]
+
+    sql, params = build_key_predicate(["idescola", "idaluno"], [(10, 1), (10, 2)])
+    assert sql == "((`idescola` = %s AND `idaluno` = %s) OR (`idescola` = %s AND `idaluno` = %s))"
+    assert params == [10, 1, 10, 2]
 
 def test_table_result_has_stage_and_backup_metadata():
     result = TableResult(table="periodo", ok=False, engine="dump", stage="import_dest", message="erro", backup_table="periodo_syncdb_backup_1")
