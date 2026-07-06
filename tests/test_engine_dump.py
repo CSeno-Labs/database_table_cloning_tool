@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from syncdb.clients import ClientSource, DumpClient
-from syncdb.engine import build_dump_command, build_import_command, build_truncate_preamble
+from syncdb.engine import build_dump_command, build_import_command, delete_existing_rows
 
 
 def test_mariadb_dump_command_disables_server_cert_verification_by_default(tmp_path: Path):
@@ -40,18 +40,54 @@ def test_mysql_import_command_does_not_get_mariadb_specific_ssl_flag(tmp_path: P
     assert "--ssl=0" not in command
 
 
-def test_truncate_preamble_deletes_existing_table_conditionally():
-    sql = build_truncate_preamble("periodo")
+def test_delete_existing_rows_disables_foreign_keys_and_commits(monkeypatch):
+    executed = []
 
-    assert "SET FOREIGN_KEY_CHECKS=0;" in sql
-    assert "information_schema.tables" in sql
-    assert "table_name = 'periodo'" in sql
-    assert "DELETE FROM `periodo`" in sql
-    assert "PREPARE syncdb_stmt" in sql
+    class FakeCursor:
+        def execute(self, sql):
+            executed.append(sql)
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            executed.append("COMMIT")
+
+        def close(self):
+            executed.append("CLOSE")
+
+    monkeypatch.setattr("syncdb.engine.get_connection", lambda config: FakeConnection())
+
+    delete_existing_rows({"database": "local"}, "periodo")
+
+    assert executed == [
+        "SET FOREIGN_KEY_CHECKS=0",
+        "DELETE FROM `periodo`",
+        "COMMIT",
+        "CLOSE",
+    ]
 
 
-def test_truncate_preamble_handles_schema_table_name():
-    sql = build_truncate_preamble("escola.periodo")
+def test_delete_existing_rows_handles_schema_table_name(monkeypatch):
+    executed = []
 
-    assert "table_name = 'periodo'" in sql
-    assert "DELETE FROM `escola`.`periodo`" in sql
+    class FakeCursor:
+        def execute(self, sql):
+            executed.append(sql)
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("syncdb.engine.get_connection", lambda config: FakeConnection())
+
+    delete_existing_rows({"database": "local"}, "escola.periodo")
+
+    assert "DELETE FROM `escola`.`periodo`" in executed

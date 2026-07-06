@@ -167,6 +167,17 @@ def build_truncate_preamble(table: str) -> str:
     )
 
 
+def delete_existing_rows(config: dict[str, Any], table: str) -> None:
+    conn = get_connection(config)
+    try:
+        cur = conn.cursor()
+        cur.execute("SET FOREIGN_KEY_CHECKS=0")
+        cur.execute(f"DELETE FROM {quote_identifier(table)}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def build_import_command(client: DumpClient, defaults_file: Path, *, database: str) -> list[str]:
     command = [str(client.mysql), f"--defaults-extra-file={defaults_file}"]
     if client.vendor == "mariadb":
@@ -190,10 +201,11 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
     sql_path = tmpdir / f"sync-db-{table.replace('.', '_')}.sql"
     try:
         needs_creation = not table_exists(destino, table)
+        if not needs_creation and sync_cfg.get("truncate_before_insert", True):
+            delete_existing_rows(destino, table)
         dump_cmd = build_dump_command(client, src_defaults, database=origem["database"], table=table, include_create=needs_creation)
         with sql_path.open("w", encoding="utf-8") as out:
-            if sync_cfg.get("truncate_before_insert", True):
-                out.write(build_truncate_preamble(table))
+            out.write("SET FOREIGN_KEY_CHECKS=0;\n")
             proc = subprocess.run(dump_cmd, stdout=out, stderr=subprocess.PIPE, text=True, check=False)
             if proc.returncode != 0:
                 raise SyncError(f"Falha no dump de {table}: {proc.stderr.strip()}")
