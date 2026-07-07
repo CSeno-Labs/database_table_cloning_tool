@@ -29,17 +29,17 @@ def test_update_reinstalls_from_main_with_uv(monkeypatch, capsys):
     assert "Atualização concluída" in shown
 
 
-def test_update_on_windows_renames_exe_before_reinstall(monkeypatch, tmp_path: Path, capsys):
-    """Windows: rename running .exe so uv can freely remove Scripts dir."""
+def test_update_on_windows_renames_bin_exe_before_reinstall(monkeypatch, tmp_path: Path, capsys):
+    """Windows: rename the bin-dir .exe (the locked one) so uv can overwrite it."""
     monkeypatch.setattr("syncdb.cli.is_windows", lambda: True)
     monkeypatch.setattr("syncdb.cli.shutil.which", lambda name: "C:/Users/Neto/.local/bin/uv.exe" if name == "uv" else None)
 
-    tool_dir = tmp_path / "uv_tools" / "database-table-cloning-tool"
-    scripts_dir = tool_dir / "Scripts"
-    scripts_dir.mkdir(parents=True)
-    exe = scripts_dir / "sync-db.exe"
+    # Simulate ~/.local/bin (the bin dir returned by `uv tool dir --bin`)
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    exe = bin_dir / "sync-db.exe"
     exe.write_text("old exe data", encoding="utf-8")
-    monkeypatch.setattr("syncdb.cli.find_uv_tool_scripts_dir", lambda: str(scripts_dir))
+    monkeypatch.setattr("syncdb.cli.find_uv_bin_dir", lambda: str(bin_dir))
 
     renames: list = []
     removes: list = []
@@ -57,14 +57,45 @@ def test_update_on_windows_renames_exe_before_reinstall(monkeypatch, tmp_path: P
 
     assert code == 0
     # rename happened before uv was called
-    assert renames == [(str(scripts_dir / "sync-db.exe"), str(scripts_dir / "sync-db.exe.old"))]
+    assert renames == [(str(bin_dir / "sync-db.exe"), str(bin_dir / "sync-db.exe.old"))]
     # uv was called
     assert run_calls == [["C:/Users/Neto/.local/bin/uv.exe", "tool", "install", "--reinstall", "git+https://github.com/CSeno-Labs/database_table_cloning_tool.git@main"]]
-    # .old was cleaned up after successful reinstall
-    assert removes == [str(scripts_dir / "sync-db.exe.old")]
+    # .old cleanup attempted after successful reinstall
+    assert removes == [str(bin_dir / "sync-db.exe.old")]
     shown = capsys.readouterr().out
     assert "janela separada" not in shown
     assert "Atualizando sync-db" in shown
+
+
+def test_update_on_windows_removes_stale_old_before_rename(monkeypatch, tmp_path: Path, capsys):
+    """Windows: if a .old file already exists from a previous update, remove it first."""
+    monkeypatch.setattr("syncdb.cli.is_windows", lambda: True)
+    monkeypatch.setattr("syncdb.cli.shutil.which", lambda name: "C:/Users/Neto/.local/bin/uv.exe" if name == "uv" else None)
+
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    exe = bin_dir / "sync-db.exe"
+    exe.write_text("current exe", encoding="utf-8")
+    old_exe = bin_dir / "sync-db.exe.old"
+    old_exe.write_text("stale old exe", encoding="utf-8")
+    monkeypatch.setattr("syncdb.cli.find_uv_bin_dir", lambda: str(bin_dir))
+
+    removes: list = []
+    renames: list = []
+    monkeypatch.setattr("syncdb.cli.os.rename", lambda src, dst: renames.append((src, dst)))
+    monkeypatch.setattr("syncdb.cli.os.remove", lambda path: removes.append(path))
+
+    monkeypatch.setattr(
+        "syncdb.cli.subprocess.run",
+        lambda command, text, capture_output, check: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    )
+
+    code = main(["update"])
+
+    assert code == 0
+    # stale .old was removed before the rename
+    assert removes[0] == str(bin_dir / "sync-db.exe.old")
+    assert renames == [(str(bin_dir / "sync-db.exe"), str(bin_dir / "sync-db.exe.old"))]
 
 
 def test_update_reports_missing_uv(monkeypatch, capsys):

@@ -255,17 +255,16 @@ def is_windows() -> bool:
     return os.name == "nt"
 
 
-def find_uv_tool_scripts_dir() -> str | None:
-    """Return the uv tool's Scripts directory on Windows, or None on Linux/macOS."""
+def find_uv_bin_dir() -> str | None:
+    """Return the uv tool bin directory on Windows, or None on failure."""
     if not is_windows():
         return None
     uv = shutil.which("uv")
     if not uv:
         return None
     try:
-        result = subprocess.run([uv, "tool", "dir"], text=True, capture_output=True, check=True, timeout=10)
-        tools_dir = result.stdout.strip()
-        return os.path.join(tools_dir, "database-table-cloning-tool", "Scripts")
+        result = subprocess.run([uv, "tool", "dir", "--bin"], text=True, capture_output=True, check=True, timeout=10)
+        return result.stdout.strip()
     except Exception:
         return None
 
@@ -281,14 +280,19 @@ def cmd_update(args: argparse.Namespace) -> int:
     repo_url = getattr(args, "repo_url", PROJECT_REPO_URL) or PROJECT_REPO_URL
     target = f"git+{repo_url}@{branch}"
     renamed = False
-    scripts_dir: str | None = None
+    bin_dir: str | None = None
     if is_windows():
-        scripts_dir = find_uv_tool_scripts_dir()
-        if scripts_dir:
-            exe_path = os.path.join(scripts_dir, "sync-db.exe")
+        bin_dir = find_uv_bin_dir()
+        if bin_dir:
+            exe_path = os.path.join(bin_dir, "sync-db.exe")
+            old_path = exe_path + ".old"
             if os.path.exists(exe_path):
                 try:
-                    os.rename(exe_path, exe_path + ".old")
+                    # Remove stale .old from a previous interrupted update so
+                    # os.rename doesn't fail (Windows won't overwrite via rename).
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+                    os.rename(exe_path, old_path)
                     renamed = True
                 except OSError:
                     pass  # não conseguiu renomear, segue sem o truque
@@ -305,7 +309,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     if proc.stderr.strip():
         console.print(proc.stderr.strip())
     if renamed:
-        old_path = os.path.join(scripts_dir, "sync-db.exe.old")
+        old_path = os.path.join(bin_dir, "sync-db.exe.old")
         try:
             os.remove(old_path)
         except OSError:
