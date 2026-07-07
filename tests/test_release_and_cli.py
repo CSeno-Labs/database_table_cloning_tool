@@ -3,11 +3,11 @@ from pathlib import Path
 from syncdb.cli import main
 
 
-def test_version_flag_reports_2_0_0(capsys):
+def test_version_flag_reports_2_1_0(capsys):
     code = main(["--version"])
 
     assert code == 0
-    assert "sync-db 2.0.0" in capsys.readouterr().out
+    assert "sync-db 2.1.0" in capsys.readouterr().out
 
 
 def test_init_quiet_suppresses_setup_messages(tmp_path: Path, capsys):

@@ -25,7 +25,7 @@ from .paths import AppPaths
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 MENU_BACK = -1000
 
 
