@@ -10,7 +10,7 @@ def parse_tables(values: list[str] | tuple[str, ...]) -> list[str]:
     tables: list[str] = []
     seen: set[str] = set()
     for value in values:
-        for raw in re.split(r"[,;\n\r\t]+", value):
+        for raw in re.split(r"[,;\s]+", value):
             table = raw.strip()
             if table and not table.startswith("#") and table not in seen:
                 tables.append(table)
