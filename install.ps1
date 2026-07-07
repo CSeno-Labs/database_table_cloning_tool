@@ -30,13 +30,40 @@ if ($Dev) {
     }
 }
 
+function Ensure-UserBinOnPath {
+    param([string]$UserBin)
+
+    $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $currentUserPathParts = @()
+    if ($currentUserPath) {
+        $currentUserPathParts = $currentUserPath -split ';' | Where-Object { $_ }
+    }
+    if ($currentUserPathParts -notcontains $UserBin) {
+        if ($currentUserPath) {
+            $newUserPath = "$currentUserPath;$UserBin"
+        } else {
+            $newUserPath = $UserBin
+        }
+        [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+        Write-Host "PATH do usuário atualizado: $UserBin"
+    }
+
+    $currentProcessPathParts = @()
+    if ($env:Path) {
+        $currentProcessPathParts = $env:Path -split ';' | Where-Object { $_ }
+    }
+    if ($currentProcessPathParts -notcontains $UserBin) {
+        $env:Path = "$UserBin;$env:Path"
+    }
+}
+
 $UserBin = Join-Path $env:USERPROFILE ".local\bin"
+Ensure-UserBinOnPath $UserBin
 $OldAlias = Join-Path $UserBin "sinc-db.exe"
 if (Test-Path $OldAlias) {
     Remove-Item $OldAlias -Force
 }
 $SyncDbExe = Join-Path $UserBin "sync-db.exe"
-$env:Path = "$UserBin;$env:Path"
 
 & $SyncDbExe init --quiet
 
