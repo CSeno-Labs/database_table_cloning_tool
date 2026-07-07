@@ -255,18 +255,15 @@ def is_windows() -> bool:
     return os.name == "nt"
 
 
-def find_uv_bin_dir() -> str | None:
-    """Return the uv tool bin directory on Windows, or None on failure."""
+def find_running_sync_db_exe() -> str | None:
+    """Return the path to the sync-db executable on Windows, or None on failure.
+
+    Uses shutil.which so it resolves exactly the file the OS found in PATH to
+    launch this process — that is always the file Windows has locked.
+    """
     if not is_windows():
         return None
-    uv = shutil.which("uv")
-    if not uv:
-        return None
-    try:
-        result = subprocess.run([uv, "tool", "dir", "--bin"], text=True, capture_output=True, check=True, timeout=10)
-        return result.stdout.strip()
-    except Exception:
-        return None
+    return shutil.which("sync-db") or shutil.which("sync-db.exe")
 
 
 def cmd_update(args: argparse.Namespace) -> int:
@@ -279,23 +276,22 @@ def cmd_update(args: argparse.Namespace) -> int:
     branch = getattr(args, "branch", "main") or "main"
     repo_url = getattr(args, "repo_url", PROJECT_REPO_URL) or PROJECT_REPO_URL
     target = f"git+{repo_url}@{branch}"
-    renamed = False
-    bin_dir: str | None = None
+    renamed_from: str | None = None
+    renamed_to: str | None = None
     if is_windows():
-        bin_dir = find_uv_bin_dir()
-        if bin_dir:
-            exe_path = os.path.join(bin_dir, "sync-db.exe")
+        exe_path = find_running_sync_db_exe()
+        if exe_path and os.path.isfile(exe_path):
             old_path = exe_path + ".old"
-            if os.path.exists(exe_path):
-                try:
-                    # Remove stale .old from a previous interrupted update so
-                    # os.rename doesn't fail (Windows won't overwrite via rename).
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
-                    os.rename(exe_path, old_path)
-                    renamed = True
-                except OSError:
-                    pass  # não conseguiu renomear, segue sem o truque
+            try:
+                # Remove stale .old from a previous interrupted update so
+                # os.rename doesn't fail (Windows won't overwrite via rename).
+                if os.path.exists(old_path):
+                    os.remove(old_path)
+                os.rename(exe_path, old_path)
+                renamed_from = exe_path
+                renamed_to = old_path
+            except OSError:
+                pass  # não conseguiu renomear, segue sem o truque
 
     console.print(f"Atualizando sync-db a partir da {branch}...")
     proc = subprocess.run([uv, "tool", "install", "--reinstall", target], text=True, capture_output=True, check=False)
@@ -304,14 +300,20 @@ def cmd_update(args: argparse.Namespace) -> int:
     if proc.returncode != 0:
         if proc.stderr.strip():
             console.print(proc.stderr.strip())
+        # Restore the renamed exe so the tool isn't left broken.
+        if renamed_from and renamed_to:
+            try:
+                if not os.path.exists(renamed_from):
+                    os.rename(renamed_to, renamed_from)
+            except OSError:
+                pass
         console.print("[red]ERRO[/] Não foi possível atualizar o sync-db.")
         return proc.returncode or 1
     if proc.stderr.strip():
         console.print(proc.stderr.strip())
-    if renamed:
-        old_path = os.path.join(bin_dir, "sync-db.exe.old")
+    if renamed_to:
         try:
-            os.remove(old_path)
+            os.remove(renamed_to)
         except OSError:
             pass
     console.print("[green]Atualização concluída.[/]")
