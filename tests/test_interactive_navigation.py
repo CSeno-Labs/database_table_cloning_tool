@@ -82,6 +82,7 @@ def test_select_option_tty_does_not_style_description_like_selected_item(monkeyp
     )
 
     assert selected == "item"
+    assert ("clear", None, None) not in calls
     assert ("print", "➤ 1. Item", "reverse bold") in calls
     assert ("print", "      ┗> resposta", "") in calls
 

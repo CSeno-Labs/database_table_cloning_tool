@@ -3,13 +3,15 @@ from pathlib import Path
 from syncdb.tables import parse_tables, parse_tables_file, quote_identifier
 
 
-def test_parse_tables_splits_commas_semicolons_and_newlines():
-    assert parse_tables(["aluno, escola", "periodo;turma", "\nmatricula\n"]) == [
+def test_parse_tables_splits_commas_semicolons_newlines_and_spaces():
+    assert parse_tables(["aluno, escola", "periodo;turma", "\nmatricula\n", "nota frequencia"]) == [
         "aluno",
         "escola",
         "periodo",
         "turma",
         "matricula",
+        "nota",
+        "frequencia",
     ]
 
 

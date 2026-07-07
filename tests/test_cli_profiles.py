@@ -254,6 +254,68 @@ def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys
     assert "Nenhuma tabela informada" in capsys.readouterr().out
 
 
+def test_interactive_menu_does_not_pause_when_first_three_items_return_back(monkeypatch, tmp_path: Path):
+    from syncdb import cli
+
+    config = tmp_path / "config" / "config.json"
+    choices = iter(["sync", "advanced_sync", "backup", "exit"])
+    pauses = []
+
+    monkeypatch.setattr("syncdb.cli.select_option", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr("syncdb.cli.interactive_sync", lambda paths: cli.MENU_BACK)
+    monkeypatch.setattr("syncdb.cli.interactive_advanced_sync", lambda paths: cli.MENU_BACK)
+    monkeypatch.setattr("syncdb.cli.interactive_backup", lambda paths: cli.MENU_BACK)
+    monkeypatch.setattr("syncdb.cli.pause_after_action", lambda: pauses.append(True))
+    monkeypatch.setattr("syncdb.cli.print_exit_banner", lambda: None)
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    assert pauses == []
+
+
+def test_interactive_sync_uses_temp_backup_when_backup_enabled(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["1", "1", "2", "periodo aluno", "s", "s", "7"])
+    seen = []
+
+    def fake_cmd_sync(paths, args):
+        seen.append(args)
+        return 0
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr("syncdb.cli.cmd_sync", fake_cmd_sync)
+    monkeypatch.setattr("syncdb.cli.pause_after_action", lambda: None)
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    assert len(seen) == 1
+    assert seen[0].tables == ["periodo", "aluno"]
+    assert seen[0].backup == "temp"
+
+
+def test_sync_backup_temp_flag_behaves_like_backup_without_value(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    seen = []
+    dropped = []
+
+    def fake_run_python_sync(sync_config, table):
+        seen.append(sync_config["sync"].get("backup_before_replace"))
+        from syncdb.engine import TableResult
+
+        return TableResult(table=table, ok=True, engine="python", rows=1, backup_table="periodo_bkp")
+
+    monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
+    monkeypatch.setattr("syncdb.cli.drop_table", lambda config, table: dropped.append(table))
+
+    code = main(["--config", str(config), "sync", "-t", "periodo", "--mode", "python", "--backup", "temp"])
+
+    assert code == 0
+    assert seen == [True]
+    assert dropped == ["periodo_bkp"]
+
+
 def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
     answers = iter(["6", "1", "1", "2"])
@@ -291,6 +353,29 @@ def test_interactive_sync_pauses_after_showing_result(monkeypatch, tmp_path: Pat
     assert code == 0
     assert pauses == [True]
     assert "Criar backup da tabela destino antes de sobrescrever? [s/N] (Default: Não) " in prompts
+
+
+def test_interactive_advanced_sync_can_choose_backup_keep(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["2", "3", "periodo", "6", "3", "8", "s"])
+    seen = []
+
+    def fake_input(prompt=""):
+        return next(answers)
+
+    def fake_cmd_sync(paths, args):
+        seen.append(args)
+        return 0
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.setattr("syncdb.cli.cmd_sync", fake_cmd_sync)
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    assert len(seen) == 1
+    assert seen[0].tables == ["periodo"]
+    assert seen[0].backup == "keep"
 
 
 def test_interactive_backup_pauses_after_showing_result(monkeypatch, tmp_path: Path):

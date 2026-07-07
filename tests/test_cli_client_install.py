@@ -43,6 +43,8 @@ def test_client_install_uses_default_package_when_no_archive_url(monkeypatch, tm
     assert code == 0
     assert installed == [(None, None)]
     assert statuses == [("Baixando e instalando cliente MariaDB gerenciado...", "dots")]
+    assert "Este comando instala o cliente MariaDB gerenciado" in captured.out
+    assert "O sync nunca baixa cliente escondido" not in captured.out
     assert "mariadb-11.4.8-winx64.zip" in captured.out
     assert "Cliente gerenciado instalado" in captured.out
 

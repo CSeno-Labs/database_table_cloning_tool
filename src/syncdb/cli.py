@@ -6,11 +6,13 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from .clients import find_managed_client, find_system_client, resolve_client
@@ -23,7 +25,23 @@ from .paths import AppPaths
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
+MENU_BACK = -1000
+
+
+def is_menu_back(status: object) -> bool:
+    return status == MENU_BACK
+
+
+def sync_progress(total: int) -> Progress:
+    return Progress(
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -365,20 +383,31 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
         return 0
 
     results = []
-    for table in tables:
-        console.print(f"\n[bold cyan]Sincronizando {table}[/]")
-        with console.status(f"Carregando tabela {table}...", spinner="dots"):
-            if resolved.kind == "dump" and resolved.client:
-                result = run_dump_sync(runtime_config, table, resolved.client, paths)
+    progress_cm = sync_progress(len(tables)) if sys.stdin.isatty() else nullcontext(None)
+    with progress_cm as progress:
+        task_id = progress.add_task("Sincronizando tabelas", total=len(tables)) if progress else None
+        for table in tables:
+            console.print(f"\n[bold cyan]Sincronizando {table}[/]")
+            if progress and task_id is not None:
+                progress.update(task_id, description=f"Sincronizando {table}")
+                if resolved.kind == "dump" and resolved.client:
+                    result = run_dump_sync(runtime_config, table, resolved.client, paths)
+                else:
+                    result = run_python_sync(runtime_config, table)
+                progress.advance(task_id)
             else:
-                result = run_python_sync(runtime_config, table)
-        results.append(result)
-        if result.ok:
-            extra = f" backup={result.backup_table}" if result.backup_table else ""
-            console.print(f"[green]OK[/] {table} ({result.engine}) rows={result.rows}{extra}")
-        else:
-            stage = f" etapa={result.stage}" if result.stage else ""
-            console.print(f"[red]FALHOU[/] {table}{stage}: {result.message}")
+                with console.status(f"Carregando tabela {table}...", spinner="dots"):
+                    if resolved.kind == "dump" and resolved.client:
+                        result = run_dump_sync(runtime_config, table, resolved.client, paths)
+                    else:
+                        result = run_python_sync(runtime_config, table)
+            results.append(result)
+            if result.ok:
+                extra = f" backup={result.backup_table}" if result.backup_table else ""
+                console.print(f"[green]OK[/] {table} ({result.engine}) rows={result.rows}{extra}")
+            else:
+                stage = f" etapa={result.stage}" if result.stage else ""
+                console.print(f"[red]FALHOU[/] {table}{stage}: {result.message}")
 
     cleanup_temporary_backups(runtime_config, backup_mode, results)
 
@@ -448,15 +477,23 @@ def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], 
             return 1
 
     results = []
-    for table in tables:
-        console.print(f"\n[bold cyan]Sincronizando {table}[/]")
-        with console.status(f"Sincronização avançada de {table}...", spinner="dots"):
-            result = run_python_advanced_sync(runtime_config, table, where_clause=where_clause, insert_missing=insert_missing)
-        results.append(result)
-        if result.ok:
-            console.print(f"[green]OK[/] {table} ({result.sync_type}) inseridas={result.inserted_rows or 0} ignoradas={result.skipped_existing_rows or 0} removidas={result.deleted_rows or 0}")
-        else:
-            console.print(f"[red]FALHOU[/] {table} etapa={result.stage}: {result.message}")
+    progress_cm = sync_progress(len(tables)) if sys.stdin.isatty() else nullcontext(None)
+    with progress_cm as progress:
+        task_id = progress.add_task("Sincronizando tabelas", total=len(tables)) if progress else None
+        for table in tables:
+            console.print(f"\n[bold cyan]Sincronizando {table}[/]")
+            if progress and task_id is not None:
+                progress.update(task_id, description=f"Sincronizando {table}")
+                result = run_python_advanced_sync(runtime_config, table, where_clause=where_clause, insert_missing=insert_missing)
+                progress.advance(task_id)
+            else:
+                with console.status(f"Sincronização avançada de {table}...", spinner="dots"):
+                    result = run_python_advanced_sync(runtime_config, table, where_clause=where_clause, insert_missing=insert_missing)
+            results.append(result)
+            if result.ok:
+                console.print(f"[green]OK[/] {table} ({result.sync_type}) inseridas={result.inserted_rows or 0} ignoradas={result.skipped_existing_rows or 0} removidas={result.deleted_rows or 0}")
+            else:
+                console.print(f"[red]FALHOU[/] {table} etapa={result.stage}: {result.message}")
 
     cleanup_temporary_backups(runtime_config, backup_mode, results)
     print_sync_summary(results)
@@ -736,7 +773,7 @@ def cmd_client(paths: AppPaths, args: argparse.Namespace) -> int:
 
 
 def cmd_client_install(paths: AppPaths, args: argparse.Namespace) -> int:
-    console.print("Este comando instala o cliente gerenciado explicitamente. O sync nunca baixa cliente escondido.")
+    console.print("Este comando instala o cliente MariaDB gerenciado")
     try:
         if args.archive_url:
             target_desc = args.archive_url
@@ -865,14 +902,20 @@ def run_interactive_menu(paths: AppPaths) -> int:
             print_exit_banner()
             return last_status
         if choice == "sync":
-            last_status = interactive_sync(paths)
-            pause_after_action()
+            status = interactive_sync(paths)
+            if not is_menu_back(status):
+                last_status = status
+                pause_after_action()
         elif choice == "advanced_sync":
-            last_status = interactive_advanced_sync(paths)
-            pause_after_action()
+            status = interactive_advanced_sync(paths)
+            if not is_menu_back(status):
+                last_status = status
+                pause_after_action()
         elif choice == "backup":
-            last_status = interactive_backup(paths)
-            pause_after_action()
+            status = interactive_backup(paths)
+            if not is_menu_back(status):
+                last_status = status
+                pause_after_action()
         elif choice == "db":
             last_status = interactive_db(paths)
         elif choice == "logs":
@@ -939,7 +982,7 @@ def interactive_backup(paths: AppPaths) -> int:
     config = load_config(paths)
     destination = choose_profile(config, "Backup de tabelas", config.get("defaults", {}).get("destination", ""), footer="Escolha o banco onde os backups serão criados")
     if destination == "back":
-        return 0
+        return MENU_BACK
     console.print(Panel(f"Banco escolhido: {destination}\nDigite as tabelas que serão copiadas para backup.", title="Backup de tabelas", border_style="cyan"))
     tables = parse_tables([input("Tabelas: ")])
     if not tables:
@@ -975,6 +1018,23 @@ def advanced_rows_text(insert_missing: bool, where_clause: str = "") -> str:
     return "TODAS - substitui a tabela inteira"
 
 
+def advanced_backup_text(backup_mode: str) -> str:
+    if backup_mode == "keep":
+        return "sim - mantém o backup no banco após sincronizar com sucesso"
+    if backup_mode == "temp":
+        return "sim - backup temporário, remove ao concluir com sucesso"
+    return "não"
+
+
+def advanced_backup_options() -> list[MenuOption]:
+    return [
+        MenuOption("não", "none", "não cria backup antes de sincronizar"),
+        MenuOption("sim, temporário", "temp", "remove o backup se a sincronização concluir com sucesso"),
+        MenuOption("sim, manter", "keep", "mantém o backup no banco após sincronizar com sucesso"),
+        MenuOption("Voltar", "back"),
+    ]
+
+
 def advanced_mode_options(where_clause: str, insert_missing: bool) -> list[MenuOption]:
     if where_clause or insert_missing:
         return [MenuOption("python", "python", "obrigatório para WHERE/insert-missing nesta versão"), MenuOption("Voltar", "back")]
@@ -987,7 +1047,7 @@ def advanced_mode_options(where_clause: str, insert_missing: bool) -> list[MenuO
     ]
 
 
-def advanced_menu_options(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str) -> list[MenuOption]:
+def advanced_menu_options(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str, backup_mode: str = "none") -> list[MenuOption]:
     where_text = f"WHERE {where_clause}" if where_clause else "não"
     return [
         MenuOption("Banco de origem", "origin", profile_summary(config, origin)),
@@ -995,13 +1055,14 @@ def advanced_menu_options(config: dict, origin: str, destination: str, tables: l
         MenuOption("Escolher tabelas", "tables", ", ".join(tables) if tables else "não escolhido"),
         MenuOption("Adicionar condicional (WHERE)", "where", where_text),
         MenuOption("Quais linhas adicionar", "rows", advanced_rows_text(insert_missing, where_clause)),
+        MenuOption("Backup antes de sincronizar", "backup", advanced_backup_text(backup_mode)),
         MenuOption("Motor de sincronização", "mode", mode),
         MenuOption("Executar sincronização avançada", "run"),
         MenuOption("Voltar", "back"),
     ]
 
 
-def format_advanced_sync_state(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str) -> str:
+def format_advanced_sync_state(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str, backup_mode: str = "none") -> str:
     where_text = f"WHERE {where_clause}" if where_clause else "não"
     rows_text = advanced_rows_text(insert_missing, where_clause)
     return "\n".join([
@@ -1015,6 +1076,8 @@ def format_advanced_sync_state(config: dict, origin: str, destination: str, tabl
         f"    ┗> {where_text}",
         "Quais linhas adicionar",
         f"    ┗> {rows_text}",
+        "Backup antes de sincronizar",
+        f"    ┗> {advanced_backup_text(backup_mode)}",
         "Motor de sincronização",
         f"    ┗> {mode}",
     ])
@@ -1028,14 +1091,15 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
     where_clause = ""
     insert_missing = False
     mode = "python"
+    backup_mode = "none"
     while True:
         choice = select_option(
             "Sincronização avançada",
-            advanced_menu_options(config, origin, destination, tables, where_clause, insert_missing, mode),
+            advanced_menu_options(config, origin, destination, tables, where_clause, insert_missing, mode, backup_mode),
             console=console,
         )
         if choice == "back":
-            return 0
+            return MENU_BACK
         if choice == "origin":
             selected = choose_profile(config, "Sincronização avançada — origem", origin)
             if selected != "back":
@@ -1064,6 +1128,14 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 insert_missing = row_choice == "missing"
                 if insert_missing and mode != "python":
                     mode = "python"
+        elif choice == "backup":
+            backup_choice = select_option(
+                "Backup antes de sincronizar",
+                advanced_backup_options(),
+                console=console,
+            )
+            if backup_choice != "back":
+                backup_mode = backup_choice
         elif choice == "mode":
             mode_choice = select_option(
                 "Motor de sincronização",
@@ -1078,11 +1150,11 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 pause_after_action()
                 continue
             console.print("\n[bold]Resumo da sincronização avançada[/]")
-            console.print(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode))
+            console.print(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode, backup_mode))
             if not confirm("Continuar?"):
                 return 1
             effective_mode = "python" if where_clause or insert_missing else mode
-            return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=effective_mode, backup="none", where=where_clause, insert_missing=insert_missing, yes=True))
+            return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=effective_mode, backup=backup_mode, where=where_clause, insert_missing=insert_missing, yes=True, dry_run=False))
 
 
 def interactive_sync(paths: AppPaths) -> int:
@@ -1094,7 +1166,7 @@ def interactive_sync(paths: AppPaths) -> int:
         footer=format_sync_context(step="origin"),
     )
     if origin == "back":
-        return 0
+        return MENU_BACK
     destination = choose_profile(
         config,
         "Sincronizando tabelas",
@@ -1102,7 +1174,7 @@ def interactive_sync(paths: AppPaths) -> int:
         footer=format_sync_context(origin=origin, step="destination"),
     )
     if destination == "back":
-        return 0
+        return MENU_BACK
     last = read_last_tables(paths, config)
     table_source = "manual"
     if last:
@@ -1117,7 +1189,7 @@ def interactive_sync(paths: AppPaths) -> int:
             footer=format_sync_context(origin=origin, destination=destination, step="tables"),
         )
     if table_source == "back":
-        return 0
+        return MENU_BACK
     if table_source == "last":
         tables = last
     else:
@@ -1126,7 +1198,7 @@ def interactive_sync(paths: AppPaths) -> int:
     console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode="auto"), title="Resumo da sincronização", border_style="cyan"))
     backup = "none"
     if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False, default_label="(Default: Não)"):
-        backup = "keep" if confirm_default("Manter o backup no banco após sincronizar com sucesso?", False) else "temp"
+        backup = "temp"
     console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo=auto | backup={backup}")
     if not confirm("Continuar?"):
         return 1

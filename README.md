@@ -103,8 +103,10 @@ sync-db sync -t aluno --where "ano >= 2026"
 sync-db sync -t aluno --insert-missing
 sync-db sync -t aluno --insert-missing --where "ano >= 2026"
 sync-db sync -t aluno --where "ano >= 2026" --dry-run
+sync-db sync -t aluno --where "ano >= 2026" --backup keep
 sync-db sync -t escola aluno --where "idescola = 123" -y
 sync-db sync -t periodo -o prod -d local --backup        # backup temporário: remove se concluir com sucesso
+sync-db sync -t periodo -o prod -d local --backup temp   # igual a --backup
 sync-db sync -t periodo -o prod -d local --backup keep   # mantém backup no banco
 sync-db backup -t periodo aluno -d local -y
 sync-db --version
@@ -129,6 +131,8 @@ Rodar só `sync-db` abre o menu interativo com setas:
 ```
 
 Use ↑/↓ para navegar, Enter para selecionar e Esc/← para voltar.
+
+Na sincronização simples pelo menu, quando o backup é ativado ele é sempre temporário: o backup é removido automaticamente se a sincronização terminar com sucesso. Para manter backup no banco, use `--backup keep` no comando ou a opção de backup da Sincronização avançada.
 
 Sincronizar por arquivo:
 
