@@ -6,7 +6,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
@@ -256,33 +255,19 @@ def is_windows() -> bool:
     return os.name == "nt"
 
 
-def ps_single_quote(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def write_windows_update_script(uv: str, target: str, script_dir: str | Path | None = None) -> Path:
-    directory = Path(script_dir) if script_dir is not None else Path(tempfile.gettempdir())
-    script = directory / "sync-db-update.ps1"
-    content = f"""$ErrorActionPreference = "Stop"
-Write-Host "Aguardando o sync-db atual encerrar para liberar os arquivos..."
-Start-Sleep -Seconds 2
-Write-Host "Atualizando sync-db..."
-& {ps_single_quote(uv)} tool install --reinstall {ps_single_quote(target)}
-$status = $LASTEXITCODE
-if ($status -eq 0) {{
-    Write-Host ""
-    Write-Host "Atualização concluída. Abra um novo terminal e rode: sync-db --version"
-}} else {{
-    Write-Host ""
-    Write-Host "ERRO: Não foi possível atualizar o sync-db."
-}}
-Write-Host ""
-Write-Host "Pressione Enter para fechar esta janela."
-[void][System.Console]::ReadLine()
-exit $status
-"""
-    script.write_text(content, encoding="utf-8")
-    return script
+def find_uv_tool_scripts_dir() -> str | None:
+    """Return the uv tool's Scripts directory on Windows, or None on Linux/macOS."""
+    if not is_windows():
+        return None
+    uv = shutil.which("uv")
+    if not uv:
+        return None
+    try:
+        result = subprocess.run([uv, "tool", "dir"], text=True, capture_output=True, check=True, timeout=10)
+        tools_dir = result.stdout.strip()
+        return os.path.join(tools_dir, "database-table-cloning-tool", "Scripts")
+    except Exception:
+        return None
 
 
 def cmd_update(args: argparse.Namespace) -> int:
@@ -295,18 +280,18 @@ def cmd_update(args: argparse.Namespace) -> int:
     branch = getattr(args, "branch", "main") or "main"
     repo_url = getattr(args, "repo_url", PROJECT_REPO_URL) or PROJECT_REPO_URL
     target = f"git+{repo_url}@{branch}"
+    renamed = False
+    scripts_dir: str | None = None
     if is_windows():
-        powershell = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
-        script = write_windows_update_script(uv, target)
-        console.print(f"Atualizando sync-db a partir da {branch} em uma janela separada...")
-        console.print("O atualizador vai aguardar alguns segundos para este processo encerrar e liberar os arquivos do Windows.")
-        subprocess.Popen(
-            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
-            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
-            close_fds=True,
-        )
-        console.print("[green]Atualizador iniciado.[/] Feche este terminal se a versão antiga continuar carregada.")
-        return 0
+        scripts_dir = find_uv_tool_scripts_dir()
+        if scripts_dir:
+            exe_path = os.path.join(scripts_dir, "sync-db.exe")
+            if os.path.exists(exe_path):
+                try:
+                    os.rename(exe_path, exe_path + ".old")
+                    renamed = True
+                except OSError:
+                    pass  # não conseguiu renomear, segue sem o truque
 
     console.print(f"Atualizando sync-db a partir da {branch}...")
     proc = subprocess.run([uv, "tool", "install", "--reinstall", target], text=True, capture_output=True, check=False)
@@ -319,6 +304,12 @@ def cmd_update(args: argparse.Namespace) -> int:
         return proc.returncode or 1
     if proc.stderr.strip():
         console.print(proc.stderr.strip())
+    if renamed:
+        old_path = os.path.join(scripts_dir, "sync-db.exe.old")
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
     console.print("[green]Atualização concluída.[/]")
     console.print("Se o terminal antigo ainda mostrar a versão anterior, feche e abra o PowerShell/terminal novamente.")
     return 0

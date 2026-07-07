@@ -29,33 +29,42 @@ def test_update_reinstalls_from_main_with_uv(monkeypatch, capsys):
     assert "Atualização concluída" in shown
 
 
-def test_update_on_windows_starts_detached_updater(monkeypatch, tmp_path: Path, capsys):
-    popen_calls = []
+def test_update_on_windows_renames_exe_before_reinstall(monkeypatch, tmp_path: Path, capsys):
+    """Windows: rename running .exe so uv can freely remove Scripts dir."""
     monkeypatch.setattr("syncdb.cli.is_windows", lambda: True)
     monkeypatch.setattr("syncdb.cli.shutil.which", lambda name: "C:/Users/Neto/.local/bin/uv.exe" if name == "uv" else None)
-    monkeypatch.setattr("syncdb.cli.tempfile.gettempdir", lambda: str(tmp_path))
 
-    def fake_popen(command, **kwargs):
-        popen_calls.append((command, kwargs))
-        return type("Proc", (), {})()
+    tool_dir = tmp_path / "uv_tools" / "database-table-cloning-tool"
+    scripts_dir = tool_dir / "Scripts"
+    scripts_dir.mkdir(parents=True)
+    exe = scripts_dir / "sync-db.exe"
+    exe.write_text("old exe data", encoding="utf-8")
+    monkeypatch.setattr("syncdb.cli.find_uv_tool_scripts_dir", lambda: str(scripts_dir))
 
-    monkeypatch.setattr("syncdb.cli.subprocess.Popen", fake_popen)
+    renames: list = []
+    removes: list = []
+    monkeypatch.setattr("syncdb.cli.os.rename", lambda src, dst: renames.append((src, dst)))
+    monkeypatch.setattr("syncdb.cli.os.remove", lambda path: removes.append(path))
+
+    run_calls = []
+    def fake_run(command, text, capture_output, check):
+        run_calls.append(command)
+        return type("Result", (), {"returncode": 0, "stdout": "updated", "stderr": ""})()
+
+    monkeypatch.setattr("syncdb.cli.subprocess.run", fake_run)
 
     code = main(["update"])
 
     assert code == 0
-    assert popen_calls
-    command, kwargs = popen_calls[0]
-    assert command[:4] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass"]
-    assert "CREATE_NEW_CONSOLE" not in kwargs or isinstance(kwargs["creationflags"], int)
-    script = tmp_path / "sync-db-update.ps1"
-    assert script.exists()
-    content = script.read_text(encoding="utf-8")
-    assert "Start-Sleep -Seconds 2" in content
-    assert "uv.exe" in content
-    assert "git+https://github.com/CSeno-Labs/database_table_cloning_tool.git@main" in content
+    # rename happened before uv was called
+    assert renames == [(str(scripts_dir / "sync-db.exe"), str(scripts_dir / "sync-db.exe.old"))]
+    # uv was called
+    assert run_calls == [["C:/Users/Neto/.local/bin/uv.exe", "tool", "install", "--reinstall", "git+https://github.com/CSeno-Labs/database_table_cloning_tool.git@main"]]
+    # .old was cleaned up after successful reinstall
+    assert removes == [str(scripts_dir / "sync-db.exe.old")]
     shown = capsys.readouterr().out
-    assert "janela separada" in shown
+    assert "janela separada" not in shown
+    assert "Atualizando sync-db" in shown
 
 
 def test_update_reports_missing_uv(monkeypatch, capsys):
