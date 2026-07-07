@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
@@ -251,6 +252,39 @@ def cmd_init(paths: AppPaths, *, quiet: bool = False) -> int:
     return 0
 
 
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
+def ps_single_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def write_windows_update_script(uv: str, target: str, script_dir: str | Path | None = None) -> Path:
+    directory = Path(script_dir) if script_dir is not None else Path(tempfile.gettempdir())
+    script = directory / "sync-db-update.ps1"
+    content = f"""$ErrorActionPreference = "Stop"
+Write-Host "Aguardando o sync-db atual encerrar para liberar os arquivos..."
+Start-Sleep -Seconds 2
+Write-Host "Atualizando sync-db..."
+& {ps_single_quote(uv)} tool install --reinstall {ps_single_quote(target)}
+$status = $LASTEXITCODE
+if ($status -eq 0) {{
+    Write-Host ""
+    Write-Host "Atualização concluída. Abra um novo terminal e rode: sync-db --version"
+}} else {{
+    Write-Host ""
+    Write-Host "ERRO: Não foi possível atualizar o sync-db."
+}}
+Write-Host ""
+Write-Host "Pressione Enter para fechar esta janela."
+[void][System.Console]::ReadLine()
+exit $status
+"""
+    script.write_text(content, encoding="utf-8")
+    return script
+
+
 def cmd_update(args: argparse.Namespace) -> int:
     uv = shutil.which("uv")
     if not uv:
@@ -261,6 +295,19 @@ def cmd_update(args: argparse.Namespace) -> int:
     branch = getattr(args, "branch", "main") or "main"
     repo_url = getattr(args, "repo_url", PROJECT_REPO_URL) or PROJECT_REPO_URL
     target = f"git+{repo_url}@{branch}"
+    if is_windows():
+        powershell = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
+        script = write_windows_update_script(uv, target)
+        console.print(f"Atualizando sync-db a partir da {branch} em uma janela separada...")
+        console.print("O atualizador vai aguardar alguns segundos para este processo encerrar e liberar os arquivos do Windows.")
+        subprocess.Popen(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            close_fds=True,
+        )
+        console.print("[green]Atualizador iniciado.[/] Feche este terminal se a versão antiga continuar carregada.")
+        return 0
+
     console.print(f"Atualizando sync-db a partir da {branch}...")
     proc = subprocess.run([uv, "tool", "install", "--reinstall", target], text=True, capture_output=True, check=False)
     if proc.stdout.strip():
