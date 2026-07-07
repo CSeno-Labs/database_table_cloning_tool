@@ -54,6 +54,16 @@ ou:
 .\install.ps1 -NoClient
 ```
 
+## Atualização
+
+Atualizar uma instalação existente puxando a versão publicada na branch `main`, mesmo sem ter o repositório clonado:
+
+```bash
+sync-db update
+```
+
+O comando usa `uv tool install --reinstall git+https://github.com/CSeno-Labs/database_table_cloning_tool.git@main` por baixo. Ele não instala cliente MariaDB; para isso use `sync-db client install` explicitamente.
+
 ## Instalação a partir do repositório clonado
 
 ```bash
