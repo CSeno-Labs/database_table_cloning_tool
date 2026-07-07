@@ -2,7 +2,7 @@ from pathlib import Path
 
 from syncdb.cli import main
 
-EXE_PATH = "C:/Users/Neto/.local/bin/sync-db.exe"
+EXE_PATH = "C:/fake/local/bin/sync-db.exe"
 
 
 def test_version_flag_reports_2_1_1(capsys):
