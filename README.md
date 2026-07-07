@@ -64,6 +64,8 @@ sync-db update
 
 O comando usa `uv tool install --reinstall git+https://github.com/CSeno-Labs/database_table_cloning_tool.git@main` por baixo. Ele não instala cliente MariaDB; para isso use `sync-db client install` explicitamente.
 
+No Windows, o atualizador abre uma janela separada e espera o `sync-db.exe` atual encerrar antes de reinstalar. Isso evita erro de `Acesso negado` ao remover a pasta `Scripts` enquanto o próprio comando ainda está rodando.
+
 ## Instalação a partir do repositório clonado
 
 ```bash
