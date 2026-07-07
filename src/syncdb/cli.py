@@ -25,8 +25,9 @@ from .paths import AppPaths
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 MENU_BACK = -1000
+PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
 
 
 def is_menu_back(status: object) -> bool:
@@ -53,6 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init", help="Cria config padrão na pasta do usuário")
     init.add_argument("--quiet", action="store_true", help="Não imprime mensagens informativas")
     sub.add_parser("doctor", help="Diagnostica config, clientes e conexões")
+    update_app = sub.add_parser("update", help="Atualiza o sync-db a partir da branch main do GitHub")
+    update_app.add_argument("--branch", default="main", help=argparse.SUPPRESS)
+    update_app.add_argument("--repo-url", default=PROJECT_REPO_URL, help=argparse.SUPPRESS)
 
     sync = sub.add_parser("sync", help="Sincroniza tabelas")
     add_table_args(sync)
@@ -138,7 +142,7 @@ def normalize_legacy_args(argv: list[str]) -> list[str]:
     The new CLI is subcommand-based, but existing users naturally try the old
     flags. Normalize those flags before argparse sees a subcommand position.
     """
-    commands = {"init", "doctor", "sync", "backup", "tables", "config", "db", "client", "logs", "uninstall"}
+    commands = {"init", "doctor", "update", "sync", "backup", "tables", "config", "db", "client", "logs", "uninstall"}
     legacy_flags = {"-t", "--tables", "-f", "--file", "-o", "--origin", "-d", "--destination", "--where", "--insert-missing", "--dry-run", "-y", "--yes", "-s", "--showtables", "-l", "--logs"}
     if not any(arg in legacy_flags for arg in argv):
         return argv
@@ -203,6 +207,8 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
         return cmd_init(paths, quiet=getattr(args, "quiet", False))
     if args.command == "doctor":
         return cmd_doctor(paths)
+    if args.command == "update":
+        return cmd_update(args)
     if args.command == "sync":
         return cmd_sync(paths, args)
     if args.command == "backup":
@@ -242,6 +248,32 @@ def cmd_init(paths: AppPaths, *, quiet: bool = False) -> int:
     if not quiet:
         console.print(f"[green]Config pronto:[/] {path}")
         console.print("Edite esse arquivo e depois rode: sync-db doctor")
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    uv = shutil.which("uv")
+    if not uv:
+        console.print("[red]ERRO[/] uv não encontrado.")
+        console.print("Instale o uv e rode novamente: powershell -ExecutionPolicy Bypass -c \"irm https://astral.sh/uv/install.ps1 | iex\"")
+        return 1
+
+    branch = getattr(args, "branch", "main") or "main"
+    repo_url = getattr(args, "repo_url", PROJECT_REPO_URL) or PROJECT_REPO_URL
+    target = f"git+{repo_url}@{branch}"
+    console.print(f"Atualizando sync-db a partir da {branch}...")
+    proc = subprocess.run([uv, "tool", "install", "--reinstall", target], text=True, capture_output=True, check=False)
+    if proc.stdout.strip():
+        console.print(proc.stdout.strip())
+    if proc.returncode != 0:
+        if proc.stderr.strip():
+            console.print(proc.stderr.strip())
+        console.print("[red]ERRO[/] Não foi possível atualizar o sync-db.")
+        return proc.returncode or 1
+    if proc.stderr.strip():
+        console.print(proc.stderr.strip())
+    console.print("[green]Atualização concluída.[/]")
+    console.print("Se o terminal antigo ainda mostrar a versão anterior, feche e abra o PowerShell/terminal novamente.")
     return 0
 
 
@@ -460,8 +492,25 @@ def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], 
     preview.add_column("Tabela")
     preview.add_column("PK")
     preview.add_column("Linhas na origem")
+    if insert_missing:
+        preview.add_column("Já existentes no destino")
+        preview.add_column("Novas no destino")
+    elif where_clause:
+        preview.add_column("Afetadas no destino")
+        preview.add_column("Inseridas após substituir")
     for result in preflight:
-        preview.add_row(result.table, ", ".join(result.primary_key or []), "" if result.origin_matched_rows is None else str(result.origin_matched_rows))
+        row = [result.table, ", ".join(result.primary_key or []), "" if result.origin_matched_rows is None else str(result.origin_matched_rows)]
+        if insert_missing:
+            row.extend([
+                "" if result.destination_matched_rows is None else str(result.destination_matched_rows),
+                "" if result.planned_insert_rows is None else str(result.planned_insert_rows),
+            ])
+        elif where_clause:
+            row.extend([
+                "" if result.destination_matched_rows is None else str(result.destination_matched_rows),
+                "" if result.planned_insert_rows is None else str(result.planned_insert_rows),
+            ])
+        preview.add_row(*row)
     console.print(preview)
     if dry_run:
         console.print("[yellow]DRY-RUN[/] Nenhuma alteração será feita no destino.")
@@ -933,6 +982,7 @@ def interactive_more(paths: AppPaths) -> int:
             [
                 MenuOption("Configurações padrão", "defaults"),
                 MenuOption("Doctor / diagnóstico", "doctor"),
+                MenuOption("Atualizar sync-db", "update"),
                 MenuOption("Cliente MariaDB gerenciado", "client"),
                 MenuOption("Desinstalar sync-db", "uninstall"),
                 MenuOption("Voltar", "back"),
@@ -945,6 +995,9 @@ def interactive_more(paths: AppPaths) -> int:
             status = interactive_defaults(paths)
         elif choice == "doctor":
             status = cmd_doctor(paths)
+            pause_after_action()
+        elif choice == "update":
+            status = cmd_update(argparse.Namespace(branch="main", repo_url=PROJECT_REPO_URL))
             pause_after_action()
         elif choice == "client":
             status = interactive_client(paths)

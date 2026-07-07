@@ -3,11 +3,40 @@ from pathlib import Path
 from syncdb.cli import main
 
 
-def test_version_flag_reports_2_1_0(capsys):
+def test_version_flag_reports_2_1_1(capsys):
     code = main(["--version"])
 
     assert code == 0
-    assert "sync-db 2.1.0" in capsys.readouterr().out
+    assert "sync-db 2.1.1" in capsys.readouterr().out
+
+
+def test_update_reinstalls_from_main_with_uv(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr("syncdb.cli.shutil.which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+
+    def fake_run(command, text, capture_output, check):
+        calls.append(command)
+        return type("Result", (), {"returncode": 0, "stdout": "updated", "stderr": ""})()
+
+    monkeypatch.setattr("syncdb.cli.subprocess.run", fake_run)
+
+    code = main(["update"])
+
+    assert code == 0
+    assert calls == [["/usr/bin/uv", "tool", "install", "--reinstall", "git+https://github.com/CSeno-Labs/database_table_cloning_tool.git@main"]]
+    shown = capsys.readouterr().out
+    assert "Atualizando sync-db a partir da main" in shown
+    assert "Atualização concluída" in shown
+
+
+def test_update_reports_missing_uv(monkeypatch, capsys):
+    monkeypatch.setattr("syncdb.cli.shutil.which", lambda name: None)
+
+    code = main(["update"])
+
+    assert code == 1
+    shown = capsys.readouterr().out
+    assert "uv não encontrado" in shown
 
 
 def test_init_quiet_suppresses_setup_messages(tmp_path: Path, capsys):

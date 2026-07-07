@@ -30,6 +30,8 @@ class TableResult:
     deleted_rows: int | None = None
     inserted_rows: int | None = None
     skipped_existing_rows: int | None = None
+    destination_matched_rows: int | None = None
+    planned_insert_rows: int | None = None
 
 
 class SyncError(RuntimeError):
@@ -134,15 +136,44 @@ def validate_where_for_table(config: dict[str, Any], table: str, primary_key: li
 
 def preflight_advanced_sync(config: dict[str, Any], tables: list[str], where_clause: str = "", insert_missing: bool = False) -> list[TableResult]:
     origem = config["origem"]
+    destino = config["destino"]
+    sync_cfg = config.get("sync", {})
+    batch_size = int(sync_cfg.get("batch_size", 1000))
     where = validate_where_clause(where_clause)
+    sync_type = advanced_sync_type(where, insert_missing)
     results: list[TableResult] = []
     for table in tables:
         try:
             primary_key = get_primary_key(origem, table)
             matched = validate_where_for_table(origem, table, primary_key, where)
-            results.append(TableResult(table=table, ok=True, engine="python/advanced", stage="preflight", sync_type=advanced_sync_type(where, insert_missing), primary_key=primary_key, origin_matched_rows=matched))
+            source_keys = select_keys(origem, table, primary_key, where)
+            destination_matches = 0
+            planned_insert = len(source_keys)
+            skipped_existing = 0
+            if source_keys and table_exists(destino, table):
+                existing = select_existing_keys(destino, table, primary_key, source_keys, batch_size)
+                destination_matches = len(existing)
+                skipped_existing = destination_matches
+                if insert_missing:
+                    planned_insert = len(source_keys) - destination_matches
+            elif insert_missing:
+                planned_insert = len(source_keys)
+            results.append(
+                TableResult(
+                    table=table,
+                    ok=True,
+                    engine="python/advanced",
+                    stage="preflight",
+                    sync_type=sync_type,
+                    primary_key=primary_key,
+                    origin_matched_rows=matched,
+                    destination_matched_rows=destination_matches,
+                    planned_insert_rows=planned_insert,
+                    skipped_existing_rows=skipped_existing if insert_missing else None,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
-            results.append(TableResult(table=table, ok=False, engine="python/advanced", stage="validate_where" if where else "inspect_primary_key", message=str(exc), sync_type=advanced_sync_type(where, insert_missing)))
+            results.append(TableResult(table=table, ok=False, engine="python/advanced", stage="validate_where" if where else "inspect_primary_key", message=str(exc), sync_type=sync_type))
     return results
 
 
