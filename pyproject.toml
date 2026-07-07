@@ -1,0 +1,30 @@
+[project]
+name = "database-table-cloning-tool"
+version = "2.0.0"
+description = "CLI tool to synchronize selected MySQL/MariaDB tables across environments."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mysql-connector-python>=9.0.0",
+    "platformdirs>=4.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+sync-db = "syncdb.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/syncdb"]

@@ -1,83 +1,352 @@
-# sync-db 🚀
+# sync-db
 
-**English** | [Português](#português)
+CLI para sincronizar tabelas MySQL/MariaDB entre ambientes, com foco em instalação simples e diagnóstico claro.
 
-A professional CLI tool to synchronize specific MySQL tables between different environments (e.g., Production RDS to Localhost) with structure detection and progress visualization.
+Status desta branch: reestruturação inicial para CLI instalável. A GUI antiga ainda não é foco.
 
-## ✨ Key Features
+## Objetivo
 
-- **Smart Sync**: Automatically creates missing tables or adds new columns to existing ones.
-- **Visual Progress**: Real-time progress bars and status panels via `rich`.
-- **Memory Efficient**: Streams large data in chunks to save RAM.
-- **Global Access**: Command-line support to run from any directory.
-- **Centralized Config**: Manage credentials and aliases in a single `config.json`.
+Permitir que qualquer colega instale o programa e rode:
 
-## 🚀 Quick Start
+```bash
+sync-db
+sync-db doctor
+sync-db sync -t periodo aluno escola -o prod -d local
+```
 
-1. **Install dependencies**:
-   ```bash
-   pip install mysql-connector-python rich
-   ```
-2. **Configure `config.json`** with your source (`origem`) and destination (`destino`) credentials.
-3. **Run**:
-   ```bash
-   python sync-db.py
-   ```
+sem depender de caminho hardcoded do XAMPP, `.bat` local, Docker ou MySQL Client instalado. Rodar apenas `sync-db` abre o menu interativo; não dispara sincronização automaticamente.
 
-## 🛠️ CLI Arguments
+## Motores de sincronização
 
-- `-t, --tables`: Sync specific tables (e.g., `-t user logs`).
-- `-f, --file`: Sync tables from a custom TXT/CSV file.
-- `-s, --showtables`: List identified tables without syncing (Dry run).
-- `-l, --logs`: Show the last 20 log entries.
+O `sync-db sync` nunca baixa nem instala binários escondido.
 
-## 💻 Global Installation (Windows)
+No modo padrão (`auto`), ele usa o que já estiver disponível, nesta ordem:
 
-To use `sinc-db` from any folder:
-1. Add the project folder path to your System **Environment Variables** (PATH).
-2. Open a new terminal and type:
-   ```bash
-   sinc-db -t table_name
-   ```
+1. Cliente gerenciado pelo próprio `sync-db` (`mariadb`/`mariadb-dump`) instalado previamente pelo instalador ou por `sync-db client install`.
+2. Cliente MariaDB/MySQL encontrado no sistema (`mariadb-dump`, `mariadb`, `mysqldump`, `mysql`).
+3. Engine Python usando `mysql-connector-python`.
 
----
+Se o usuário forçar `--mode dump`, `--mode managed-dump` ou `--mode system-dump` e nenhum cliente compatível existir, o programa erra com instruções claras.
 
-## Português
+## Instalação em uma linha
 
-Ferramenta CLI para sincronização inteligente de tabelas MySQL entre ambientes (ex: Produção para Local), com detecção de estrutura e progresso visual.
+Linux/macOS:
 
-## ✨ Funcionalidades
+```bash
+curl -LsSf https://raw.githubusercontent.com/CSeno-Labs/database_table_cloning_tool/main/install.sh | sh
+```
 
-- **Sincronização Inteligente**: Cria tabelas ausentes ou adiciona novas colunas automaticamente.
-- **Progresso Visual**: Barras de progresso e painéis coloridos via `rich`.
-- **Eficiência**: Processa grandes volumes de dados em pedaços (chunks).
-- **Acesso Global**: Suporte para execução via terminal em qualquer diretório.
-- **Configuração Central**: Credenciais e apelidos gerenciados no `config.json`.
+Windows PowerShell:
 
-## 🚀 Início Rápido
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/CSeno-Labs/database_table_cloning_tool/main/install.ps1 | iex"
+```
 
-1. **Instale as dependências**:
-   ```bash
-   pip install mysql-connector-python rich
-   ```
-2. **Configure o `config.json`** com as credenciais de `origem` e `destino`.
-3. **Execute**:
-   ```bash
-   python sync-db.py
-   ```
+O instalador pergunta se deve instalar o cliente MariaDB gerenciado. Para automatizar:
 
-## 🛠️ Argumentos CLI
+```powershell
+.\install.ps1 -WithClient
+```
 
-- `-t, --tables`: Sincroniza tabelas específicas (ex: `-t usuario logs`).
-- `-f, --file`: Sincroniza tabelas de um arquivo TXT/CSV personalizado.
-- `-s, --showtables`: Apenas lista as tabelas (sem sincronizar).
-- `-l, --logs`: Exibe as últimas 20 entradas de log.
+ou:
 
-## 💻 Instalação Global (Windows)
+```powershell
+.\install.ps1 -NoClient
+```
 
-Para usar o comando `sinc-db` em qualquer pasta:
-1. Adicione o caminho da pasta do projeto às **Variáveis de Ambiente** (PATH) do Sistema.
-2. Abra um novo terminal e digite:
-   ```bash
-   sinc-db -t nome_da_tabela
-   ```
+## Instalação a partir do repositório clonado
+
+```bash
+git clone https://github.com/CSeno-Labs/database_table_cloning_tool.git
+cd database_table_cloning_tool
+./install.sh
+```
+
+Windows:
+
+```powershell
+git clone https://github.com/CSeno-Labs/database_table_cloning_tool.git
+cd database_table_cloning_tool
+.\install.ps1
+```
+
+Modo desenvolvimento/editável:
+
+```bash
+./install.sh --dev
+```
+
+```powershell
+.\install.ps1 -Dev
+```
+
+## Comandos principais
+
+Criar config padrão:
+
+```bash
+sync-db init
+```
+
+Diagnosticar ambiente:
+
+```bash
+sync-db doctor
+```
+
+Sincronizar tabelas:
+
+```bash
+sync-db sync -t periodo aluno escola
+sync-db sync -t periodo -o prod -d local
+sync-db sync -t aluno --where "ano >= 2026"
+sync-db sync -t aluno --insert-missing
+sync-db sync -t aluno --insert-missing --where "ano >= 2026"
+sync-db sync -t aluno --where "ano >= 2026" --dry-run
+sync-db sync -t escola aluno --where "idescola = 123" -y
+sync-db sync -t periodo -o prod -d local --backup        # backup temporário: remove se concluir com sucesso
+sync-db sync -t periodo -o prod -d local --backup keep   # mantém backup no banco
+sync-db backup -t periodo aluno -d local -y
+sync-db --version
+```
+
+A forma curta também funciona:
+
+```bash
+sync-db -t periodo -o prod -d local
+```
+
+Rodar só `sync-db` abre o menu interativo com setas:
+
+```text
+1 - Sincronizar tabelas
+2 - Sincronização avançada
+3 - Backup de tabelas
+4 - Bancos / conexões
+5 - Logs
+6 - Mais
+7 - Sair
+```
+
+Use ↑/↓ para navegar, Enter para selecionar e Esc/← para voltar.
+
+Sincronizar por arquivo:
+
+```bash
+sync-db sync -f tabelas_puxar.csv
+```
+
+Forçar engine Python:
+
+```bash
+sync-db sync -t periodo --mode python
+```
+
+Forçar dump:
+
+```bash
+sync-db sync -t periodo --mode dump
+sync-db sync -t periodo --mode managed-dump
+sync-db sync -t periodo --mode system-dump
+```
+
+## Configuração
+
+O config fica na pasta do usuário, não dentro do repositório. Ele suporta vários bancos cadastrados no mesmo arquivo.
+
+Ver caminho:
+
+```bash
+sync-db config path
+```
+
+Mostrar config com senha mascarada:
+
+```bash
+sync-db config show
+```
+
+Editar:
+
+```bash
+sync-db config edit
+```
+
+Formato base:
+
+```json
+{
+  "profiles": {
+    "prod": {
+      "label": "Produção leitura",
+      "host": "host-da-origem",
+      "port": 3306,
+      "user": "usuario",
+      "password": "senha",
+      "database": "banco_origem",
+      "charset": "latin1",
+      "allow_as_origin": true,
+      "allow_as_destination": false
+    },
+    "local": {
+      "label": "Local",
+      "host": "127.0.0.1",
+      "port": 3306,
+      "user": "root",
+      "password": "",
+      "database": "banco_destino",
+      "charset": "latin1",
+      "allow_as_origin": true,
+      "allow_as_destination": true
+    }
+  },
+  "defaults": {
+    "origin": "prod",
+    "destination": "local"
+  },
+  "sync": {
+    "last_tables_file": "last_tables.txt",
+    "truncate_before_insert": true,
+    "create_missing_tables": true,
+    "add_missing_columns": true,
+    "batch_size": 1000
+  },
+  "client": {
+    "mode": "auto",
+    "preferred_source": "managed",
+    "vendor": "mariadb"
+  }
+}
+```
+
+Comandos para bancos:
+
+```bash
+sync-db db list
+sync-db db add
+sync-db db edit prod
+sync-db db remove homolog
+sync-db db test prod
+sync-db db set-defaults -o prod -d local
+```
+
+`allow_as_destination=false` marca um banco como somente origem/source_only, útil para produção de leitura.
+
+O arquivo `last_tables.txt` guarda as últimas tabelas sincronizadas. Ele não é usado automaticamente por `sync-db` sem flags; para reutilizar explicitamente:
+
+```bash
+sync-db sync --last
+```
+
+Não existe `auto_download`: instalação de cliente é sempre explícita.
+
+## Cliente gerenciado
+
+Comandos:
+
+```bash
+sync-db client status
+sync-db client path
+sync-db client install
+sync-db client remove
+sync-db client update
+```
+
+`sync-db client install` detecta o sistema/arquitetura e baixa um pacote oficial MariaDB via API de downloads do MariaDB. A instalação é explícita: o comando mostra pacote, destino e SHA256 antes de instalar, e o `sync-db sync` nunca baixa nada escondido.
+
+Plataformas automáticas suportadas nesta versão:
+
+- Windows x64: pacote `mariadb-*-winx64.zip`
+- Linux x86_64: pacote `mariadb-*-linux-systemd-x86_64.tar.gz`
+
+Uso recomendado:
+
+```bash
+sync-db client install
+```
+
+Sem confirmação interativa:
+
+```bash
+sync-db client install --yes
+```
+
+Pacote customizado ainda é possível:
+
+```bash
+sync-db client install --archive-url https://exemplo/pacote-mariadb-portatil.zip --sha256 <sha256>
+```
+
+## Docker
+
+O programa não precisa saber que o banco está em Docker se a porta estiver exposta.
+
+Exemplo:
+
+```yaml
+services:
+  mysql:
+    image: mysql:8
+    ports:
+      - "3306:3306"
+```
+
+Config destino:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 3306,
+  "user": "root",
+  "password": "root",
+  "database": "app"
+}
+```
+
+Se a porta não estiver exposta, nenhum cliente externo consegue conectar sem usar Docker diretamente.
+
+## Desinstalação
+
+Linux/macOS:
+
+```bash
+./uninstall.sh
+```
+
+Remover também config/dados:
+
+```bash
+./uninstall.sh --all
+```
+
+Windows:
+
+```powershell
+.\uninstall.ps1
+```
+
+Remover também config/dados:
+
+```powershell
+.\uninstall.ps1 -All
+```
+
+Ou pelo próprio comando:
+
+```bash
+sync-db uninstall
+```
+
+## Desenvolvimento
+
+Rodar testes:
+
+```bash
+uv run --with pytest --with platformdirs --with rich --with mysql-connector-python pytest tests -q
+```
+
+Rodar CLI local:
+
+```bash
+uv run sync-db --help
+```

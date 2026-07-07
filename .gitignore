@@ -1,1 +1,24 @@
+# Python/cache
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local user config/secrets/logs/temp dumps
 config.json
+*.log
+sincronizacao.log
+temp_*.sql
+gui_temp_*.sql
+sync-db-*.sql
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
