@@ -230,7 +230,18 @@ def test_sync_dry_run_advanced_runs_preflight_but_not_execution(monkeypatch, tmp
 
     monkeypatch.setattr(
         "syncdb.cli.preflight_advanced_sync",
-        lambda config, tables, where_clause, insert_missing: [TableResult(table="aluno", ok=True, engine="python/advanced", stage="preflight", primary_key=["id"], origin_matched_rows=2)],
+        lambda config, tables, where_clause, insert_missing: [
+            TableResult(
+                table="aluno",
+                ok=True,
+                engine="python/advanced",
+                stage="preflight",
+                primary_key=["id"],
+                origin_matched_rows=2,
+                destination_matched_rows=1,
+                planned_insert_rows=2,
+            )
+        ],
     )
     monkeypatch.setattr("syncdb.cli.run_python_advanced_sync", lambda *a, **kw: calls.append((a, kw)))
 
@@ -241,6 +252,7 @@ def test_sync_dry_run_advanced_runs_preflight_but_not_execution(monkeypatch, tmp
     shown = capsys.readouterr().out
     assert "DRY-RUN" in shown
     assert "Prévia da sincronização avançada" in shown
+    assert "Afetadas no destino" in shown
 
 
 def test_sync_without_tables_no_longer_reads_default_file(tmp_path: Path, capsys):

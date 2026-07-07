@@ -25,7 +25,7 @@ from .paths import AppPaths
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 MENU_BACK = -1000
 
 
@@ -460,8 +460,25 @@ def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], 
     preview.add_column("Tabela")
     preview.add_column("PK")
     preview.add_column("Linhas na origem")
+    if insert_missing:
+        preview.add_column("Já existentes no destino")
+        preview.add_column("Novas no destino")
+    elif where_clause:
+        preview.add_column("Afetadas no destino")
+        preview.add_column("Inseridas após substituir")
     for result in preflight:
-        preview.add_row(result.table, ", ".join(result.primary_key or []), "" if result.origin_matched_rows is None else str(result.origin_matched_rows))
+        row = [result.table, ", ".join(result.primary_key or []), "" if result.origin_matched_rows is None else str(result.origin_matched_rows)]
+        if insert_missing:
+            row.extend([
+                "" if result.destination_matched_rows is None else str(result.destination_matched_rows),
+                "" if result.planned_insert_rows is None else str(result.planned_insert_rows),
+            ])
+        elif where_clause:
+            row.extend([
+                "" if result.destination_matched_rows is None else str(result.destination_matched_rows),
+                "" if result.planned_insert_rows is None else str(result.planned_insert_rows),
+            ])
+        preview.add_row(*row)
     console.print(preview)
     if dry_run:
         console.print("[yellow]DRY-RUN[/] Nenhuma alteração será feita no destino.")

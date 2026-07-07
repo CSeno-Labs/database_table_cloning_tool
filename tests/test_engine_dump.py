@@ -10,6 +10,7 @@ from syncdb.engine import (
     delete_existing_rows,
     drop_table,
     normalize_where_clause,
+    preflight_advanced_sync,
     run_table_backup,
     validate_where_clause,
 )
@@ -41,6 +42,39 @@ def test_build_key_predicate_supports_simple_and_composite_primary_keys():
     sql, params = build_key_predicate(["idescola", "idaluno"], [(10, 1), (10, 2)])
     assert sql == "((`idescola` = %s AND `idaluno` = %s) OR (`idescola` = %s AND `idaluno` = %s))"
     assert params == [10, 1, 10, 2]
+
+def test_preflight_insert_missing_counts_new_rows_on_destination(monkeypatch):
+    monkeypatch.setattr("syncdb.engine.get_primary_key", lambda config, table: ["id"])
+    monkeypatch.setattr("syncdb.engine.validate_where_for_table", lambda config, table, primary_key, where: 4)
+    monkeypatch.setattr("syncdb.engine.select_keys", lambda config, table, primary_key, where: [(1,), (2,), (3,), (4,)])
+    monkeypatch.setattr("syncdb.engine.table_exists", lambda config, table: True)
+    monkeypatch.setattr("syncdb.engine.select_existing_keys", lambda config, table, primary_key, keys, batch_size: {(1,), (3,)})
+
+    results = preflight_advanced_sync({"origem": {"database": "prod"}, "destino": {"database": "local"}}, ["turma2026"], insert_missing=True)
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert results[0].origin_matched_rows == 4
+    assert results[0].destination_matched_rows == 2
+    assert results[0].planned_insert_rows == 2
+    assert results[0].skipped_existing_rows == 2
+
+
+def test_preflight_where_counts_rows_that_would_be_replaced_on_destination(monkeypatch):
+    monkeypatch.setattr("syncdb.engine.get_primary_key", lambda config, table: ["id"])
+    monkeypatch.setattr("syncdb.engine.validate_where_for_table", lambda config, table, primary_key, where: 3)
+    monkeypatch.setattr("syncdb.engine.select_keys", lambda config, table, primary_key, where: [(10,), (11,), (12,)])
+    monkeypatch.setattr("syncdb.engine.table_exists", lambda config, table: True)
+    monkeypatch.setattr("syncdb.engine.select_existing_keys", lambda config, table, primary_key, keys, batch_size: {(10,), (12,)})
+
+    results = preflight_advanced_sync({"origem": {"database": "prod"}, "destino": {"database": "local"}}, ["turma2026"], where_clause="idescola = 1111")
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert results[0].origin_matched_rows == 3
+    assert results[0].destination_matched_rows == 2
+    assert results[0].planned_insert_rows == 3
+
 
 def test_table_result_has_stage_and_backup_metadata():
     result = TableResult(table="periodo", ok=False, engine="dump", stage="import_dest", message="erro", backup_table="periodo_syncdb_backup_1")
