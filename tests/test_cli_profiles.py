@@ -293,6 +293,29 @@ def test_interactive_sync_pauses_after_showing_result(monkeypatch, tmp_path: Pat
     assert "Criar backup da tabela destino antes de sobrescrever? [s/N] (Default: Não) " in prompts
 
 
+def test_interactive_advanced_sync_can_choose_backup_keep(monkeypatch, tmp_path: Path):
+    config = tmp_path / "config" / "config.json"
+    answers = iter(["2", "3", "periodo", "6", "3", "8", "s"])
+    seen = []
+
+    def fake_input(prompt=""):
+        return next(answers)
+
+    def fake_cmd_sync(paths, args):
+        seen.append(args)
+        return 0
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.setattr("syncdb.cli.cmd_sync", fake_cmd_sync)
+
+    code = main(["--config", str(config)])
+
+    assert code == 0
+    assert len(seen) == 1
+    assert seen[0].tables == ["periodo"]
+    assert seen[0].backup == "keep"
+
+
 def test_interactive_backup_pauses_after_showing_result(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
     answers = iter(["3", "2", "periodo", "", "7"])

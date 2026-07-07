@@ -736,7 +736,7 @@ def cmd_client(paths: AppPaths, args: argparse.Namespace) -> int:
 
 
 def cmd_client_install(paths: AppPaths, args: argparse.Namespace) -> int:
-    console.print("Este comando instala o cliente gerenciado explicitamente. O sync nunca baixa cliente escondido.")
+    console.print("Este comando instala o cliente MariaDB gerenciado")
     try:
         if args.archive_url:
             target_desc = args.archive_url
@@ -975,6 +975,23 @@ def advanced_rows_text(insert_missing: bool, where_clause: str = "") -> str:
     return "TODAS - substitui a tabela inteira"
 
 
+def advanced_backup_text(backup_mode: str) -> str:
+    if backup_mode == "keep":
+        return "sim - mantém o backup no banco após sincronizar com sucesso"
+    if backup_mode == "temp":
+        return "sim - backup temporário, remove ao concluir com sucesso"
+    return "não"
+
+
+def advanced_backup_options() -> list[MenuOption]:
+    return [
+        MenuOption("não", "none", "não cria backup antes de sincronizar"),
+        MenuOption("sim, temporário", "temp", "remove o backup se a sincronização concluir com sucesso"),
+        MenuOption("sim, manter", "keep", "mantém o backup no banco após sincronizar com sucesso"),
+        MenuOption("Voltar", "back"),
+    ]
+
+
 def advanced_mode_options(where_clause: str, insert_missing: bool) -> list[MenuOption]:
     if where_clause or insert_missing:
         return [MenuOption("python", "python", "obrigatório para WHERE/insert-missing nesta versão"), MenuOption("Voltar", "back")]
@@ -987,7 +1004,7 @@ def advanced_mode_options(where_clause: str, insert_missing: bool) -> list[MenuO
     ]
 
 
-def advanced_menu_options(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str) -> list[MenuOption]:
+def advanced_menu_options(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str, backup_mode: str = "none") -> list[MenuOption]:
     where_text = f"WHERE {where_clause}" if where_clause else "não"
     return [
         MenuOption("Banco de origem", "origin", profile_summary(config, origin)),
@@ -995,13 +1012,14 @@ def advanced_menu_options(config: dict, origin: str, destination: str, tables: l
         MenuOption("Escolher tabelas", "tables", ", ".join(tables) if tables else "não escolhido"),
         MenuOption("Adicionar condicional (WHERE)", "where", where_text),
         MenuOption("Quais linhas adicionar", "rows", advanced_rows_text(insert_missing, where_clause)),
+        MenuOption("Backup antes de sincronizar", "backup", advanced_backup_text(backup_mode)),
         MenuOption("Motor de sincronização", "mode", mode),
         MenuOption("Executar sincronização avançada", "run"),
         MenuOption("Voltar", "back"),
     ]
 
 
-def format_advanced_sync_state(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str) -> str:
+def format_advanced_sync_state(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str, backup_mode: str = "none") -> str:
     where_text = f"WHERE {where_clause}" if where_clause else "não"
     rows_text = advanced_rows_text(insert_missing, where_clause)
     return "\n".join([
@@ -1015,6 +1033,8 @@ def format_advanced_sync_state(config: dict, origin: str, destination: str, tabl
         f"    ┗> {where_text}",
         "Quais linhas adicionar",
         f"    ┗> {rows_text}",
+        "Backup antes de sincronizar",
+        f"    ┗> {advanced_backup_text(backup_mode)}",
         "Motor de sincronização",
         f"    ┗> {mode}",
     ])
@@ -1028,10 +1048,11 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
     where_clause = ""
     insert_missing = False
     mode = "python"
+    backup_mode = "none"
     while True:
         choice = select_option(
             "Sincronização avançada",
-            advanced_menu_options(config, origin, destination, tables, where_clause, insert_missing, mode),
+            advanced_menu_options(config, origin, destination, tables, where_clause, insert_missing, mode, backup_mode),
             console=console,
         )
         if choice == "back":
@@ -1064,6 +1085,14 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 insert_missing = row_choice == "missing"
                 if insert_missing and mode != "python":
                     mode = "python"
+        elif choice == "backup":
+            backup_choice = select_option(
+                "Backup antes de sincronizar",
+                advanced_backup_options(),
+                console=console,
+            )
+            if backup_choice != "back":
+                backup_mode = backup_choice
         elif choice == "mode":
             mode_choice = select_option(
                 "Motor de sincronização",
@@ -1078,11 +1107,11 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 pause_after_action()
                 continue
             console.print("\n[bold]Resumo da sincronização avançada[/]")
-            console.print(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode))
+            console.print(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode, backup_mode))
             if not confirm("Continuar?"):
                 return 1
             effective_mode = "python" if where_clause or insert_missing else mode
-            return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=effective_mode, backup="none", where=where_clause, insert_missing=insert_missing, yes=True))
+            return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=effective_mode, backup=backup_mode, where=where_clause, insert_missing=insert_missing, yes=True, dry_run=False))
 
 
 def interactive_sync(paths: AppPaths) -> int:

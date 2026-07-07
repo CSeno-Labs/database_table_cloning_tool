@@ -103,6 +103,7 @@ sync-db sync -t aluno --where "ano >= 2026"
 sync-db sync -t aluno --insert-missing
 sync-db sync -t aluno --insert-missing --where "ano >= 2026"
 sync-db sync -t aluno --where "ano >= 2026" --dry-run
+sync-db sync -t aluno --where "ano >= 2026" --backup keep
 sync-db sync -t escola aluno --where "idescola = 123" -y
 sync-db sync -t periodo -o prod -d local --backup        # backup temporário: remove se concluir com sucesso
 sync-db sync -t periodo -o prod -d local --backup keep   # mantém backup no banco
