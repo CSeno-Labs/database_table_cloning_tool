@@ -22,6 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
+from .schema import SCHEMA_INCLUDE_CATEGORIES, describe_schema_options, resolve_schema_options
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -74,6 +75,30 @@ def build_parser() -> argparse.ArgumentParser:
     add_table_args(backup)
     backup.add_argument("-d", "--destination", help="Tag do banco onde o backup será criado")
     backup.add_argument("-y", "--yes", action="store_true", help="Usa nomes sugeridos sem perguntar")
+
+    schema = sub.add_parser("schema", help="Analisa e sincroniza estrutura de tabelas")
+    schema_sub = schema.add_subparsers(dest="schema_command")
+    for name, help_text in (
+        ("diff", "Mostra diferenças de estrutura sem alterar nada"),
+        ("plan", "Mostra o plano de SQL/ações de estrutura sem aplicar"),
+        ("sync", "Aplica alterações de estrutura explicitamente"),
+    ):
+        schema_cmd = schema_sub.add_parser(name, help=help_text)
+        add_table_args(schema_cmd)
+        schema_cmd.add_argument("-o", "--origin", help="Tag do banco modelo/origem")
+        schema_cmd.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
+        if name in {"plan", "sync"}:
+            schema_cmd.add_argument(
+                "--mode",
+                default="basic",
+                choices=["b", "basic", "a", "add", "additive", "c", "copy", "recreate-table"],
+                help="Modo: b/basic, a/add/additive, c/copy ou recreate-table",
+            )
+            schema_cmd.add_argument(
+                "--include",
+                help=f"Categorias para modo add/copy: {','.join(SCHEMA_INCLUDE_CATEGORIES)},all",
+            )
+            schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma aplicação sem prompt interativo")
 
     tables = sub.add_parser("tables", help="Lista tabelas identificadas")
     tables.add_argument("-t", "--tables", nargs="+", help="Tabelas inline")
@@ -142,7 +167,7 @@ def normalize_legacy_args(argv: list[str]) -> list[str]:
     The new CLI is subcommand-based, but existing users naturally try the old
     flags. Normalize those flags before argparse sees a subcommand position.
     """
-    commands = {"init", "doctor", "update", "sync", "backup", "tables", "config", "db", "client", "logs", "uninstall"}
+    commands = {"init", "doctor", "update", "sync", "backup", "schema", "tables", "config", "db", "client", "logs", "uninstall"}
     legacy_flags = {"-t", "--tables", "-f", "--file", "-o", "--origin", "-d", "--destination", "--where", "--insert-missing", "--dry-run", "-y", "--yes", "-s", "--showtables", "-l", "--logs"}
     if not any(arg in legacy_flags for arg in argv):
         return argv
@@ -213,6 +238,8 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
         return cmd_sync(paths, args)
     if args.command == "backup":
         return cmd_backup(paths, args)
+    if args.command == "schema":
+        return cmd_schema(paths, args)
     if args.command == "tables":
         return cmd_tables(args)
     if args.command == "config":
@@ -629,6 +656,44 @@ def cmd_backup(paths: AppPaths, args: argparse.Namespace) -> int:
     return 0 if all(result.ok for result in results) else 1
 
 
+def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
+    sub = args.schema_command or "diff"
+    config = load_config(paths)
+    tables = collect_tables(args, config)
+    if not tables:
+        console.print("[red]ERRO[/] Nenhuma tabela informada. Use -t ou -f.")
+        return 2
+    try:
+        origin, destination = resolve_profile_pair(config, getattr(args, "origin", None), getattr(args, "destination", None))
+    except ValueError as exc:
+        console.print(f"[red]ERRO[/] {exc}")
+        return 2
+
+    console.print(f"Modelo de estrutura: [bold]{origin}[/]")
+    console.print(f"Banco que será comparado/alterado: [bold]{destination}[/]")
+    console.print(f"Tabelas: {', '.join(tables)}")
+
+    if sub == "diff":
+        console.print("[yellow]schema diff[/] ainda está em implementação. Nenhuma alteração foi feita.")
+        return 0
+
+    try:
+        options = resolve_schema_options(getattr(args, "mode", None), getattr(args, "include", None))
+    except ValueError as exc:
+        console.print(f"[red]ERRO[/] {exc}")
+        return 2
+
+    console.print(f"Plano de estrutura: {describe_schema_options(options)}")
+    if sub == "plan":
+        console.print("[yellow]schema plan[/] ainda está em implementação. Nenhuma alteração foi feita.")
+        return 0
+    if sub == "sync":
+        console.print("[yellow]schema sync[/] ainda está em implementação. Nenhuma alteração foi feita.")
+        return 0
+    console.print(f"[red]ERRO[/] Ação de schema desconhecida: {sub}")
+    return 2
+
+
 def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list, *, sync_type: str = "full_replace", where_clause: str = "") -> Path:
     paths.ensure_dirs()
     entry = {
@@ -983,6 +1048,7 @@ def run_interactive_menu(paths: AppPaths) -> int:
             [
                 MenuOption("Sincronizar tabelas", "sync"),
                 MenuOption("Sincronização avançada", "advanced_sync"),
+                MenuOption("Estrutura das tabelas", "schema"),
                 MenuOption("Backup de tabelas", "backup"),
                 MenuOption("Bancos / conexões", "db"),
                 MenuOption("Logs", "logs"),
@@ -1001,6 +1067,11 @@ def run_interactive_menu(paths: AppPaths) -> int:
                 pause_after_action()
         elif choice == "advanced_sync":
             status = interactive_advanced_sync(paths)
+            if not is_menu_back(status):
+                last_status = status
+                pause_after_action()
+        elif choice == "schema":
+            status = interactive_schema(paths)
             if not is_menu_back(status):
                 last_status = status
                 pause_after_action()
@@ -1100,6 +1171,44 @@ def interactive_backup(paths: AppPaths) -> int:
         globals()["suggested_backup_name"] = original
 
 
+def interactive_schema(paths: AppPaths) -> int:
+    config = load_config(paths)
+    origin = choose_profile(config, "Estrutura das tabelas — modelo/origem", config.get("defaults", {}).get("origin", ""))
+    if origin == "back":
+        return MENU_BACK
+    destination = choose_profile(config, "Estrutura das tabelas — banco que será alterado", config.get("defaults", {}).get("destination", ""))
+    if destination == "back":
+        return MENU_BACK
+    console.print(Panel(f"Modelo: {origin}\nBanco que será alterado: {destination}\nDigite as tabelas para analisar.", title="Estrutura das tabelas", border_style="cyan"))
+    tables = parse_tables([input("Tabelas: ")])
+    if not tables:
+        console.print("[red]ERRO[/] Nenhuma tabela informada.")
+        return 2
+    choice = select_option(
+        "Estrutura das tabelas",
+        [
+            MenuOption("Ver diferenças", "diff"),
+            MenuOption("Correção básica", "basic", "adiciona apenas colunas faltantes"),
+            MenuOption("Adicionar itens faltantes", "add", "não altera nem remove o que já existe"),
+            MenuOption("Copiar estrutura", "copy", "usa ALTER TABLE; pode alterar e remover itens existentes"),
+            MenuOption("Recriar tabela a partir da origem", "recreate-table", "backup opcional; sem alias no CLI"),
+            MenuOption("Voltar", "back"),
+        ],
+        console=console,
+    )
+    if choice == "back":
+        return MENU_BACK
+    if choice == "diff":
+        return cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=tables, file=None, origin=origin, destination=destination))
+    mode = {"basic": "basic", "add": "add", "copy": "copy", "recreate-table": "recreate-table"}[choice]
+    include = None
+    if choice == "add":
+        include = ask("O que adicionar (--include)", "columns", hint="columns,indexes,keys,foreign-keys,table-options,all")
+    if choice == "recreate-table":
+        console.print("[yellow]ATENÇÃO:[/] este modo recria a tabela no destino. Backup é opcional e deve ser feito separadamente se desejado.")
+    return cmd_schema(paths, argparse.Namespace(schema_command="plan", tables=tables, file=None, origin=origin, destination=destination, mode=mode, include=include, yes=False))
+
+
 def profile_summary(config: dict, tag: str) -> str:
     profile = config.get("profiles", {}).get(tag, {})
     if not tag:
@@ -1152,7 +1261,6 @@ def advanced_menu_options(config: dict, origin: str, destination: str, tables: l
         MenuOption("Escolher tabelas", "tables", ", ".join(tables) if tables else "não escolhido"),
         MenuOption("Adicionar condicional (WHERE)", "where", where_text),
         MenuOption("Quais linhas adicionar", "rows", advanced_rows_text(insert_missing, where_clause)),
-        MenuOption("Backup antes de sincronizar", "backup", advanced_backup_text(backup_mode)),
         MenuOption("Motor de sincronização", "mode", mode),
         MenuOption("Executar sincronização avançada", "run"),
         MenuOption("Voltar", "back"),
@@ -1173,8 +1281,6 @@ def format_advanced_sync_state(config: dict, origin: str, destination: str, tabl
         f"    ┗> {where_text}",
         "Quais linhas adicionar",
         f"    ┗> {rows_text}",
-        "Backup antes de sincronizar",
-        f"    ┗> {advanced_backup_text(backup_mode)}",
         "Motor de sincronização",
         f"    ┗> {mode}",
     ])
@@ -1225,14 +1331,6 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 insert_missing = row_choice == "missing"
                 if insert_missing and mode != "python":
                     mode = "python"
-        elif choice == "backup":
-            backup_choice = select_option(
-                "Backup antes de sincronizar",
-                advanced_backup_options(),
-                console=console,
-            )
-            if backup_choice != "back":
-                backup_mode = backup_choice
         elif choice == "mode":
             mode_choice = select_option(
                 "Motor de sincronização",
@@ -1294,9 +1392,7 @@ def interactive_sync(paths: AppPaths) -> int:
         tables = parse_tables([input("Tabelas: ")])
     console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode="auto"), title="Resumo da sincronização", border_style="cyan"))
     backup = "none"
-    if confirm_default("Criar backup da tabela destino antes de sobrescrever?", False, default_label="(Default: Não)"):
-        backup = "temp"
-    console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo=auto | backup={backup}")
+    console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo=auto")
     if not confirm("Continuar?"):
         return 1
     return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode="auto", backup=backup, where=None, insert_missing=False, yes=False))
