@@ -2,12 +2,7 @@ import pytest
 
 from syncdb.cli import build_parser, run_interactive_menu
 from syncdb.paths import AppPaths
-from syncdb.schema import (
-    SchemaMode,
-    normalize_schema_include,
-    normalize_schema_mode,
-    resolve_schema_options,
-)
+from syncdb.schema import SchemaAction, normalize_schema_action
 
 
 def app_paths(tmp_path):
@@ -19,62 +14,43 @@ def app_paths(tmp_path):
     )
 
 
-def test_schema_mode_aliases_are_normalized():
-    assert normalize_schema_mode("b") == SchemaMode.BASIC
-    assert normalize_schema_mode("basic") == SchemaMode.BASIC
-    assert normalize_schema_mode("a") == SchemaMode.ADD
-    assert normalize_schema_mode("add") == SchemaMode.ADD
-    assert normalize_schema_mode("additive") == SchemaMode.ADD
-    assert normalize_schema_mode("c") == SchemaMode.COPY
-    assert normalize_schema_mode("copy") == SchemaMode.COPY
-    assert normalize_schema_mode("recreate-table") == SchemaMode.RECREATE_TABLE
+def test_schema_action_names_are_explicit():
+    assert normalize_schema_action("copy") == SchemaAction.COPY
+    assert normalize_schema_action("update") == SchemaAction.UPDATE
+    assert normalize_schema_action("recreate-table") == SchemaAction.RECREATE_TABLE
 
 
-@pytest.mark.parametrize("alias", ["r", "recreate", "recreate_table", "rebuild"])
-def test_recreate_table_has_no_alias(alias):
-    with pytest.raises(ValueError, match="recreate-table"):
-        normalize_schema_mode(alias)
+@pytest.mark.parametrize("alias", ["c", "sync", "preserve-extra", "recreate", "rebuild"])
+def test_schema_actions_have_no_short_aliases(alias):
+    with pytest.raises(ValueError):
+        normalize_schema_action(alias)
 
 
-def test_include_all_expands_to_every_schema_category():
-    assert normalize_schema_include("all") == (
-        "columns",
-        "indexes",
-        "keys",
-        "foreign-keys",
-        "table-options",
-    )
-
-
-def test_add_mode_can_choose_include_categories():
-    options = resolve_schema_options("a", "columns,indexes")
-
-    assert options.mode == SchemaMode.ADD
-    assert options.include == ("columns", "indexes")
-
-
-def test_basic_mode_rejects_include_to_keep_it_unambiguous():
-    with pytest.raises(ValueError, match="basic.*--include"):
-        resolve_schema_options("basic", "indexes")
-
-
-def test_recreate_table_rejects_include_because_it_is_complete():
-    with pytest.raises(ValueError, match="recreate-table.*--include"):
-        resolve_schema_options("recreate-table", "all")
-
-
-def test_schema_help_exposes_modes_and_include_all(capsys):
+def test_schema_help_exposes_explicit_commands(capsys):
     parser = build_parser()
     with pytest.raises(SystemExit) as exc:
-        parser.parse_args(["schema", "sync", "--help"])
+        parser.parse_args(["schema", "--help"])
 
     assert exc.value.code == 0
     shown = capsys.readouterr().out
-    assert "basic" in shown
-    assert "add" in shown
+    assert "diff" in shown
     assert "copy" in shown
+    assert "update" in shown
     assert "recreate-table" in shown
-    assert "all" in shown
+    assert "--mode" not in shown
+    assert "--include" not in shown
+
+
+@pytest.mark.parametrize("command", ["copy", "update", "recreate-table"])
+def test_schema_action_help_has_no_mode_or_include(command, capsys):
+    parser = build_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["schema", command, "--help"])
+
+    assert exc.value.code == 0
+    shown = capsys.readouterr().out
+    assert "--mode" not in shown
+    assert "--include" not in shown
 
 
 def test_main_menu_has_schema_option_before_backup(monkeypatch, tmp_path):

@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SCHEMA_INCLUDE_CATEGORIES, describe_schema_options, resolve_schema_options
+from .schema import SchemaAction, describe_schema_action, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -80,24 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     schema_sub = schema.add_subparsers(dest="schema_command")
     for name, help_text in (
         ("diff", "Mostra diferenças de estrutura sem alterar nada"),
-        ("plan", "Mostra o plano de SQL/ações de estrutura sem aplicar"),
-        ("sync", "Aplica alterações de estrutura explicitamente"),
+        ("copy", "Copia estrutura da origem; pode alterar e remover extras"),
+        ("update", "Atualiza estrutura preservando extras do destino"),
+        ("recreate-table", "Recria tabela no destino a partir da origem"),
     ):
         schema_cmd = schema_sub.add_parser(name, help=help_text)
         add_table_args(schema_cmd)
         schema_cmd.add_argument("-o", "--origin", help="Tag do banco modelo/origem")
         schema_cmd.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
-        if name in {"plan", "sync"}:
-            schema_cmd.add_argument(
-                "--mode",
-                default="basic",
-                choices=["b", "basic", "a", "add", "additive", "c", "copy", "recreate-table"],
-                help="Modo: b/basic, a/add/additive, c/copy ou recreate-table",
-            )
-            schema_cmd.add_argument(
-                "--include",
-                help=f"Categorias para modo add/copy: {','.join(SCHEMA_INCLUDE_CATEGORIES)},all",
-            )
+        if name != "diff":
             schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma aplicação sem prompt interativo")
 
     tables = sub.add_parser("tables", help="Lista tabelas identificadas")
@@ -658,6 +649,11 @@ def cmd_backup(paths: AppPaths, args: argparse.Namespace) -> int:
 
 def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
     sub = args.schema_command or "diff"
+    try:
+        action = normalize_schema_action(sub)
+    except ValueError as exc:
+        console.print(f"[red]ERRO[/] {exc}")
+        return 2
     config = load_config(paths)
     tables = collect_tables(args, config)
     if not tables:
@@ -673,25 +669,13 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
     console.print(f"Banco que será comparado/alterado: [bold]{destination}[/]")
     console.print(f"Tabelas: {', '.join(tables)}")
 
-    if sub == "diff":
+    if action == SchemaAction.DIFF:
         console.print("[yellow]schema diff[/] ainda está em implementação. Nenhuma alteração foi feita.")
         return 0
 
-    try:
-        options = resolve_schema_options(getattr(args, "mode", None), getattr(args, "include", None))
-    except ValueError as exc:
-        console.print(f"[red]ERRO[/] {exc}")
-        return 2
-
-    console.print(f"Plano de estrutura: {describe_schema_options(options)}")
-    if sub == "plan":
-        console.print("[yellow]schema plan[/] ainda está em implementação. Nenhuma alteração foi feita.")
-        return 0
-    if sub == "sync":
-        console.print("[yellow]schema sync[/] ainda está em implementação. Nenhuma alteração foi feita.")
-        return 0
-    console.print(f"[red]ERRO[/] Ação de schema desconhecida: {sub}")
-    return 2
+    console.print(f"Ação de estrutura: {describe_schema_action(action)}")
+    console.print(f"[yellow]schema {action.value}[/] ainda está em implementação. Nenhuma alteração foi feita.")
+    return 0
 
 
 def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list, *, sync_type: str = "full_replace", where_clause: str = "") -> Path:
@@ -1188,9 +1172,8 @@ def interactive_schema(paths: AppPaths) -> int:
         "Estrutura das tabelas",
         [
             MenuOption("Ver diferenças", "diff"),
-            MenuOption("Correção básica", "basic", "adiciona apenas colunas faltantes"),
-            MenuOption("Adicionar itens faltantes", "add", "não altera nem remove o que já existe"),
-            MenuOption("Copiar estrutura", "copy", "usa ALTER TABLE; pode alterar e remover itens existentes"),
+            MenuOption("Copiar estrutura", "copy", "deixa o destino igual à origem; pode alterar e remover extras"),
+            MenuOption("Atualizar preservando extras", "update", "copia a estrutura da origem, mas não remove extras do destino"),
             MenuOption("Recriar tabela a partir da origem", "recreate-table", "backup opcional; sem alias no CLI"),
             MenuOption("Voltar", "back"),
         ],
@@ -1198,15 +1181,12 @@ def interactive_schema(paths: AppPaths) -> int:
     )
     if choice == "back":
         return MENU_BACK
-    if choice == "diff":
-        return cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=tables, file=None, origin=origin, destination=destination))
-    mode = {"basic": "basic", "add": "add", "copy": "copy", "recreate-table": "recreate-table"}[choice]
-    include = None
-    if choice == "add":
-        include = ask("O que adicionar (--include)", "columns", hint="columns,indexes,keys,foreign-keys,table-options,all")
+    if choice in {"diff", "copy", "update"}:
+        return cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False))
     if choice == "recreate-table":
         console.print("[yellow]ATENÇÃO:[/] este modo recria a tabela no destino. Backup é opcional e deve ser feito separadamente se desejado.")
-    return cmd_schema(paths, argparse.Namespace(schema_command="plan", tables=tables, file=None, origin=origin, destination=destination, mode=mode, include=include, yes=False))
+        return cmd_schema(paths, argparse.Namespace(schema_command="recreate-table", tables=tables, file=None, origin=origin, destination=destination, yes=False))
+    return MENU_BACK
 
 
 def profile_summary(config: dict, tag: str) -> str:
