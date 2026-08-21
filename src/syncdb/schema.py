@@ -390,20 +390,43 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
         sql = f"ALTER TABLE {quote_identifier(diff.table)} DROP COLUMN {quote_identifier(name)};" if operation == "drop" else ""
         operations.append(SchemaPlanOperation(operation, "column", name, (), sql))
 
+    source_indexes = {str(index[0]): index for index in (source.indexes if source else ())}
+    source_fks = {str(fk[0]): fk for fk in (source.foreign_keys if source else ())}
+    def index_add(index):
+        name, unique, columns = index
+        cols = ", ".join(quote_identifier(str(c)) for c in columns)
+        if name == "PRIMARY": return f"ALTER TABLE {quote_identifier(diff.table)} ADD PRIMARY KEY ({cols});"
+        return f"ALTER TABLE {quote_identifier(diff.table)} ADD {'UNIQUE INDEX' if unique else 'INDEX'} {quote_identifier(str(name))} ({cols});"
+    def index_drop(name):
+        return f"ALTER TABLE {quote_identifier(diff.table)} {'DROP PRIMARY KEY' if name == 'PRIMARY' else 'DROP INDEX ' + quote_identifier(name)};"
     for name in diff.missing_indexes:
-        operations.append(SchemaPlanOperation("add", "index", name))
+        index = source_indexes.get(name)
+        operations.append(SchemaPlanOperation("add", "index", name, (f"origem: ({', '.join(index[2])})",) if index else (), index_add(index) if index else ""))
     for name in diff.changed_indexes:
-        operations.append(SchemaPlanOperation("replace", "index", name))
+        index = source_indexes.get(name)
+        operations.append(SchemaPlanOperation("replace", "index", name, (), f"{index_drop(name)}\n{index_add(index)}" if index else ""))
     for name in diff.extra_indexes:
-        operations.append(SchemaPlanOperation("drop" if action == SchemaAction.COPY else "preserve", "index", name))
+        op = "drop" if action == SchemaAction.COPY else "preserve"
+        operations.append(SchemaPlanOperation(op, "index", name, (), index_drop(name) if op == "drop" else ""))
 
+    def fk_add(fk):
+        name, columns, ref_table, ref_columns, update, delete = fk
+        cols = ", ".join(quote_identifier(str(c)) for c in columns)
+        refs = ", ".join(quote_identifier(str(c)) for c in ref_columns)
+        return f"ALTER TABLE {quote_identifier(diff.table)} ADD CONSTRAINT {quote_identifier(str(name))} FOREIGN KEY ({cols}) REFERENCES {quote_identifier(str(ref_table))} ({refs}) ON UPDATE {update} ON DELETE {delete};"
     for name in diff.missing_foreign_keys:
-        operations.append(SchemaPlanOperation("add", "foreign_key", name))
+        fk = source_fks.get(name)
+        operations.append(SchemaPlanOperation("add", "foreign_key", name, (), fk_add(fk) if fk else ""))
     for name in diff.changed_foreign_keys:
-        operations.append(SchemaPlanOperation("replace", "foreign_key", name))
+        fk = source_fks.get(name)
+        operations.append(SchemaPlanOperation("replace", "foreign_key", name, (), f"ALTER TABLE {quote_identifier(diff.table)} DROP FOREIGN KEY {quote_identifier(name)};\n{fk_add(fk)}" if fk else ""))
     for name in diff.extra_foreign_keys:
-        operations.append(SchemaPlanOperation("drop" if action == SchemaAction.COPY else "preserve", "foreign_key", name))
+        op = "drop" if action == SchemaAction.COPY else "preserve"
+        operations.append(SchemaPlanOperation(op, "foreign_key", name, (), f"ALTER TABLE {quote_identifier(diff.table)} DROP FOREIGN KEY {quote_identifier(name)};" if op == "drop" else ""))
 
+    source_options = dict(source.table_options) if source else {}
     for name in diff.changed_table_options:
-        operations.append(SchemaPlanOperation("modify", "table_option", name))
+        value = source_options.get(name, "")
+        sql = f"ALTER TABLE {quote_identifier(diff.table)} ENGINE={value};" if name == "engine" else f"ALTER TABLE {quote_identifier(diff.table)} DEFAULT COLLATE {value};"
+        operations.append(SchemaPlanOperation("modify", "table_option", name, (f"origem: {value}",), sql))
     return SchemaPlan(table=diff.table, action=action, operations=tuple(operations))
