@@ -30,7 +30,7 @@ def test_copy_plan_adds_changes_reorders_and_removes_extras():
         indexes=(("idx_dev", False, ("campo_dev",)),),
     )
 
-    plan = build_schema_plan(compare_schema(source, target), action="copy")
+    plan = build_schema_plan(compare_schema(source, target), action="copy", source=source, target=target)
 
     assert [(item.action, item.category, item.name) for item in plan.operations] == [
         ("add", "column", "novo"),
@@ -39,6 +39,8 @@ def test_copy_plan_adds_changes_reorders_and_removes_extras():
         ("add", "index", "idx_novo"),
         ("drop", "index", "idx_dev"),
     ]
+    assert plan.operations[0].details == ("VARCHAR(20) NULL", "depois de id")
+    assert plan.operations[1].details == ("destino: VARCHAR(80) NULL", "origem: VARCHAR(150) NOT NULL")
 
 
 def test_update_plan_preserves_extras_but_still_adds_and_modifies():
@@ -51,7 +53,7 @@ def test_update_plan_preserves_extras_but_still_adds_and_modifies():
         indexes=(("idx_dev", False, ("campo_dev",)),),
     )
 
-    plan = build_schema_plan(compare_schema(source, target), action="update")
+    plan = build_schema_plan(compare_schema(source, target), action="update", source=source, target=target)
 
     assert [(item.action, item.category, item.name) for item in plan.operations] == [
         ("add", "column", "novo"),

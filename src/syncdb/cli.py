@@ -694,7 +694,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         for table in tables:
             try:
                 source_schema, target_schema = inspect_schema_pair(origin, destination, table)
-                plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action))
+                plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action, source=source_schema, target=target_schema))
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
@@ -755,9 +755,18 @@ def print_schema_plan(plan: SchemaPlan) -> None:
         console.print("[green]Nenhuma alteração necessária.[/]")
         return
     symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~", "preserve": "!"}
+    styles = {"add": "green", "modify": "yellow", "move": "blue", "drop": "red", "replace": "yellow", "preserve": "cyan"}
     labels = {"column": "coluna", "index": "índice", "foreign_key": "FK", "table_option": "opção da tabela"}
-    for operation in plan.operations:
-        console.print(f"{symbols[operation.action]} {labels[operation.category]} {operation.name}")
+    sections = (("ADICIONAR", {"add"}), ("ALTERAR", {"modify", "replace"}), ("REORDENAR", {"move"}), ("REMOVER", {"drop"}), ("PRESERVAR NO DESTINO", {"preserve"}))
+    for title, actions in sections:
+        selected = [operation for operation in plan.operations if operation.action in actions]
+        if not selected:
+            continue
+        console.print(f"\n[bold]{title} ({len(selected)})[/]")
+        for operation in selected:
+            console.print(f"[{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
+            for detail in operation.details:
+                console.print(f"  [dim]┗> {detail}[/]")
     if plan.has_destructive_operations:
         console.print("[yellow]Atenção: o plano copy contém remoções no destino.[/]")
 

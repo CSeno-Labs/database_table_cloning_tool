@@ -75,6 +75,7 @@ class SchemaPlanOperation:
     action: str
     category: str
     name: str
+    details: tuple[str, ...] = ()
 
     @property
     def destructive(self) -> bool:
@@ -316,7 +317,19 @@ def compare_schema(source: SchemaSnapshot, target: SchemaSnapshot) -> SchemaDiff
     )
 
 
-def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str) -> SchemaPlan:
+def _column_description(column: tuple[Any, ...]) -> str:
+    _, column_type, nullable, default, extra, collation, _ = column
+    text = f"{str(column_type).upper()} {'NULL' if nullable == 'YES' else 'NOT NULL'}"
+    if default is not None:
+        text += f" DEFAULT {default!r}"
+    if extra:
+        text += f" {extra.upper()}"
+    if collation:
+        text += f" COLLATE {collation}"
+    return text
+
+
+def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: SchemaSnapshot | None = None, target: SchemaSnapshot | None = None) -> SchemaPlan:
     action = normalize_schema_action(action.value if isinstance(action, SchemaAction) else action)
     if action not in {SchemaAction.COPY, SchemaAction.UPDATE}:
         raise ValueError("Plano automático suporta apenas copy ou update.")
@@ -324,10 +337,21 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str) -> SchemaPla
         raise ValueError("Não é possível gerar plano automático quando a tabela não existe nos dois bancos.")
 
     operations: list[SchemaPlanOperation] = []
+    source_columns = {str(column[0]): column for column in (source.columns if source else ())}
+    target_columns = {str(column[0]): column for column in (target.columns if target else ())}
     for name in diff.missing_columns:
-        operations.append(SchemaPlanOperation("add", "column", name))
+        details = []
+        if name in source_columns:
+            details.append(_column_description(source_columns[name]))
+            source_names = [str(column[0]) for column in source.columns] if source else []
+            position = source_names.index(name)
+            details.append(f"depois de {source_names[position - 1]}" if position else "primeira coluna")
+        operations.append(SchemaPlanOperation("add", "column", name, tuple(details)))
     for name in diff.changed_columns:
-        operations.append(SchemaPlanOperation("modify", "column", name))
+        details = ()
+        if name in source_columns and name in target_columns:
+            details = (f"destino: {_column_description(target_columns[name])}", f"origem: {_column_description(source_columns[name])}")
+        operations.append(SchemaPlanOperation("modify", "column", name, details))
     for name in diff.reordered_columns:
         operations.append(SchemaPlanOperation("move", "column", name))
     for name in diff.extra_columns:
