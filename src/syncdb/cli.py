@@ -763,20 +763,20 @@ def print_schema_plan(plan: SchemaPlan) -> None:
         selected = [operation for operation in plan.operations if operation.action in actions]
         if not selected:
             continue
-        console.print(f"\n[bold]{title} ({len(selected)})[/]")
+        console.print(f"\n    [bold]{title} ({len(selected)})[/]")
         for category in ("column", "index", "foreign_key", "table_option"):
             grouped = [operation for operation in selected if operation.category == category]
             if not grouped:
                 continue
-            console.print()
-            console.print(f"[bold cyan]── {category_titles[category]} ({len(grouped)}) ──[/]")
+            console.print(f"\n        [bold cyan]{category_titles[category]} ({len(grouped)})[/]")
             for operation in grouped:
-                console.print(f"[{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
+                console.print(f"\n            [{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
                 for detail in operation.details:
-                    console.print(f"  [dim]┗> {detail}[/]")
+                    console.print(f"              [dim]┗> {detail}[/]")
                 if operation.sql:
-                    console.print("  [dim]SQL:[/]")
-                    console.print(f"  [dim]{operation.sql}[/]")
+                    console.print("              [dim]SQL:[/]")
+                    for sql_line in operation.sql.splitlines():
+                        console.print(f"              [dim]{sql_line}[/]")
     if plan.has_destructive_operations:
         console.print("[yellow]Atenção: o plano copy contém remoções no destino.[/]")
 
