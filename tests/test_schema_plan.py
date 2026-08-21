@@ -35,7 +35,6 @@ def test_copy_plan_adds_changes_reorders_and_removes_extras():
     assert [(item.action, item.category, item.name) for item in plan.operations] == [
         ("add", "column", "novo"),
         ("modify", "column", "nome"),
-        ("move", "column", "nome"),
         ("drop", "column", "campo_dev"),
         ("add", "index", "idx_novo"),
         ("drop", "index", "idx_dev"),

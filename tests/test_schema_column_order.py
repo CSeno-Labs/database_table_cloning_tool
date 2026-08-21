@@ -26,7 +26,7 @@ def test_compare_schema_reports_column_order_separately_from_definition_change()
 
     assert diff.missing_columns == ("campo_novo",)
     assert diff.changed_columns == ()
-    assert diff.reordered_columns == ("nome",)
+    assert diff.reordered_columns == ()
 
 
 def test_compare_schema_still_reports_real_column_definition_change():
@@ -37,3 +37,26 @@ def test_compare_schema_still_reports_real_column_definition_change():
 
     assert diff.changed_columns == ("nome",)
     assert diff.reordered_columns == ()
+
+
+def test_compare_schema_reports_only_real_relative_order_changes():
+    source = snapshot(
+        "pessoa",
+        (
+            ("id", "int", "NO", None, "", None, 1),
+            ("nome", "varchar(150)", "NO", None, "", None, 2),
+            ("email", "varchar(150)", "NO", None, "", None, 3),
+        ),
+    )
+    target = snapshot(
+        "pessoa",
+        (
+            ("id", "int", "NO", None, "", None, 1),
+            ("email", "varchar(150)", "NO", None, "", None, 2),
+            ("nome", "varchar(150)", "NO", None, "", None, 3),
+        ),
+    )
+
+    diff = compare_schema(source, target)
+
+    assert diff.reordered_columns == ("email",)

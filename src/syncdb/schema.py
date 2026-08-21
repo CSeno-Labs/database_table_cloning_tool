@@ -251,6 +251,28 @@ def _column_change_reasons(source: tuple[Any, ...], target: tuple[Any, ...]) -> 
     return tuple(label for index, label in enumerate(labels, 1) if source[index] != target[index])
 
 
+def _longest_common_subsequence(left: tuple[str, ...], right: tuple[str, ...]) -> tuple[str, ...]:
+    lengths = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
+    for left_index in range(len(left) - 1, -1, -1):
+        for right_index in range(len(right) - 1, -1, -1):
+            if left[left_index] == right[right_index]:
+                lengths[left_index][right_index] = 1 + lengths[left_index + 1][right_index + 1]
+            else:
+                lengths[left_index][right_index] = max(lengths[left_index + 1][right_index], lengths[left_index][right_index + 1])
+    common = []
+    left_index = right_index = 0
+    while left_index < len(left) and right_index < len(right):
+        if left[left_index] == right[right_index]:
+            common.append(left[left_index])
+            left_index += 1
+            right_index += 1
+        elif lengths[left_index + 1][right_index] > lengths[left_index][right_index + 1]:
+            left_index += 1
+        else:
+            right_index += 1
+    return tuple(common)
+
+
 def _compare_columns(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any, ...], ...]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]]:
     source_map = {str(item[0]): item for item in source}
     target_map = {str(item[0]): item for item in target}
@@ -259,7 +281,10 @@ def _compare_columns(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[An
     shared = source_map.keys() & target_map.keys()
     column_changes = tuple(sorted((name, _column_change_reasons(source_map[name], target_map[name])) for name in shared if source_map[name][1:-1] != target_map[name][1:-1]))
     changed = tuple(name for name, _ in column_changes)
-    reordered = tuple(sorted(name for name in shared if source_map[name][-1] != target_map[name][-1]))
+    source_order = tuple(str(item[0]) for item in source if str(item[0]) in shared)
+    target_order = tuple(str(item[0]) for item in target if str(item[0]) in shared)
+    kept_in_place = set(_longest_common_subsequence(source_order, target_order))
+    reordered = tuple(name for name in source_order if name not in kept_in_place)
     return missing, extra, changed, reordered, column_changes
 
 
