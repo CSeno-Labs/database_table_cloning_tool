@@ -700,6 +700,7 @@ def print_schema_diff(diff: SchemaDiff) -> None:
     rows = (
         ("Colunas ausentes no destino", diff.missing_columns),
         ("Colunas diferentes", diff.changed_columns),
+        ("Colunas em ordem diferente", diff.reordered_columns),
         ("Extras no destino", diff.extra_columns),
         ("Índices ausentes no destino", diff.missing_indexes),
         ("Índices diferentes", diff.changed_indexes),

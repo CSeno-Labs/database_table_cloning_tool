@@ -37,6 +37,7 @@ class SchemaDiff:
     missing_columns: tuple[str, ...] = ()
     extra_columns: tuple[str, ...] = ()
     changed_columns: tuple[str, ...] = ()
+    reordered_columns: tuple[str, ...] = ()
     missing_indexes: tuple[str, ...] = ()
     extra_indexes: tuple[str, ...] = ()
     changed_indexes: tuple[str, ...] = ()
@@ -53,6 +54,7 @@ class SchemaDiff:
             self.missing_columns,
             self.extra_columns,
             self.changed_columns,
+            self.reordered_columns,
             self.missing_indexes,
             self.extra_indexes,
             self.changed_indexes,
@@ -176,10 +178,21 @@ def _compare_named(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any,
     return missing, extra, changed
 
 
+def _compare_columns(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any, ...], ...]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    source_map = {str(item[0]): item for item in source}
+    target_map = {str(item[0]): item for item in target}
+    missing = tuple(sorted(name for name in source_map if name not in target_map))
+    extra = tuple(sorted(name for name in target_map if name not in source_map))
+    shared = source_map.keys() & target_map.keys()
+    changed = tuple(sorted(name for name in shared if source_map[name][1:-1] != target_map[name][1:-1]))
+    reordered = tuple(sorted(name for name in shared if source_map[name][-1] != target_map[name][-1]))
+    return missing, extra, changed, reordered
+
+
 def compare_schema(source: SchemaSnapshot, target: SchemaSnapshot) -> SchemaDiff:
     if not source.exists or not target.exists:
         return SchemaDiff(table=source.table, source_exists=source.exists, target_exists=target.exists)
-    missing_columns, extra_columns, changed_columns = _compare_named(source.columns, target.columns)
+    missing_columns, extra_columns, changed_columns, reordered_columns = _compare_columns(source.columns, target.columns)
     missing_indexes, extra_indexes, changed_indexes = _compare_named(source.indexes, target.indexes)
     missing_foreign_keys, extra_foreign_keys, changed_foreign_keys = _compare_named(source.foreign_keys, target.foreign_keys)
     source_options = dict(source.table_options)
@@ -192,6 +205,7 @@ def compare_schema(source: SchemaSnapshot, target: SchemaSnapshot) -> SchemaDiff
         missing_columns=missing_columns,
         extra_columns=extra_columns,
         changed_columns=changed_columns,
+        reordered_columns=reordered_columns,
         missing_indexes=missing_indexes,
         extra_indexes=extra_indexes,
         changed_indexes=changed_indexes,
