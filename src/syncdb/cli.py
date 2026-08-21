@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, SchemaDiff, SchemaPlan, build_schema_plan, compare_schema, describe_schema_action, inspect_schema_pair, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, SchemaPlan, build_schema_plan, compare_schema, describe_schema_action, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -93,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
         add_table_args(schema_cmd)
         schema_cmd.add_argument("-o", "--origin", help="Tag do banco modelo/origem")
         schema_cmd.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
+        if name in {"copy", "update"}:
+            schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma a aplicação do plano de estrutura")
         if name == "diff":
             schema_cmd.add_argument("-v", "--verbose", action="store_true", help="Mostra tempos detalhados de leitura")
 
@@ -670,6 +672,10 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print(f"[red]ERRO[/] {exc}")
         return 2
 
+    if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not sys.stdin.isatty():
+        console.print("[red]ERRO[/] schema copy/update em modo não interativo exige -y/--yes.")
+        return 2
+
     console.print(f"Modelo de estrutura: [bold]{origin['alias']}[/]")
     console.print(f"Banco que será comparado/alterado: [bold]{destination['alias']}[/]")
     console.print(f"Tabelas: {', '.join(tables)}")
@@ -701,6 +707,32 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         for plan in plans:
             print_schema_plan(plan)
         console.print("[yellow]Nenhuma alteração foi feita. Este é apenas o plano de estrutura.[/]")
+        return 0
+
+    if action in {SchemaAction.COPY, SchemaAction.UPDATE}:
+        plans = []
+        for table in tables:
+            try:
+                source_schema, target_schema = inspect_schema_pair(origin, destination, table)
+                plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action, source=source_schema, target=target_schema))
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[red]FALHOU[/] {table}: {exc}")
+                return 1
+        for plan in plans:
+            print_schema_plan(plan)
+        if not getattr(args, "yes", False):
+            typed = input("Digite APLICAR para executar este plano: ").strip()
+            if typed != "APLICAR":
+                console.print("Cancelado. Nenhuma alteração foi feita.")
+                return 1
+        for plan in plans:
+            report = execute_schema_plan(destination, plan)
+            if report.ok:
+                console.print(f"[green]OK[/] {plan.table}: {len(report.applied)} SQL aplicado(s).")
+            else:
+                console.print(f"[red]FALHOU[/] {plan.table}: após {len(report.applied)} SQL aplicado(s), falhou: {report.failed}")
+                console.print(f"[red]ERRO[/] {report.error}")
+                return 1
         return 0
 
     console.print(f"Ação de estrutura: {describe_schema_action(action)}")

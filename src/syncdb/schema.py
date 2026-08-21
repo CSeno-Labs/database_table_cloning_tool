@@ -94,6 +94,17 @@ class SchemaPlan:
         return any(operation.destructive for operation in self.operations)
 
 
+@dataclass(frozen=True)
+class SchemaExecutionReport:
+    applied: tuple[str, ...] = ()
+    failed: str | None = None
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.failed is None
+
+
 def normalize_schema_action(value: str | None) -> SchemaAction:
     raw = (value or "diff").strip().lower()
     if raw in _SCHEMA_ACTIONS:
@@ -432,3 +443,88 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
         sql = f"ALTER TABLE {quote_identifier(diff.table)} ENGINE={value};" if name == "engine" else f"ALTER TABLE {quote_identifier(diff.table)} DEFAULT COLLATE {value};"
         operations.append(SchemaPlanOperation("modify", "table_option", name, (f"origem: {value}",), sql))
     return SchemaPlan(table=diff.table, action=action, operations=tuple(operations))
+
+
+def _operation_statements(operation: SchemaPlanOperation) -> tuple[str, ...]:
+    """Return the single statements encoded in a planned operation.
+
+    Plan SQL is generated internally and may contain a drop/add pair for a
+    replacement.  It is deliberately never submitted as a multi-statement
+    query so an error can be reported at the exact failing statement.
+    """
+    statements: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    for character in operation.sql:
+        current.append(character)
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif quote:
+            if character == quote:
+                quote = ""
+        elif character in {"'", '"', "`"}:
+            quote = character
+        elif character == ";":
+            statement = "".join(current).strip()
+            if statement:
+                statements.append(statement)
+            current = []
+    trailing = "".join(current).strip()
+    if trailing:
+        statements.append(trailing)
+    return tuple(statements)
+
+
+def _execution_statements(plan: SchemaPlan) -> tuple[str, ...]:
+    operations = [operation for operation in plan.operations if operation.action != "preserve" and operation.sql]
+
+    def statements(category: str, actions: set[str], *, drops: bool | None = None) -> list[str]:
+        selected: list[str] = []
+        for operation in operations:
+            if operation.category != category or operation.action not in actions:
+                continue
+            for statement in _operation_statements(operation):
+                is_drop = " DROP " in f" {statement.upper()} "
+                if drops is None or is_drop == drops:
+                    selected.append(statement)
+        return selected
+
+    # Constraints and indexes must be removed before dependent columns.  The
+    # inverse order applies when rebuilding them.  In copy mode this also
+    # ensures destination-only columns are dropped only after their FK/index.
+    ordered = [
+        *statements("foreign_key", {"drop", "replace"}, drops=True),
+        *statements("index", {"drop", "replace"}, drops=True),
+        *statements("column", {"add", "modify", "move"}),
+        *statements("column", {"drop"}),
+        *statements("table_option", {"modify"}),
+        *statements("index", {"add", "replace"}, drops=False),
+        *statements("foreign_key", {"add", "replace"}, drops=False),
+    ]
+    return tuple(ordered)
+
+
+def execute_schema_plan(target_config: dict[str, Any], plan: SchemaPlan) -> SchemaExecutionReport:
+    """Execute a freshly reviewed plan, one SQL statement at a time."""
+    connection = target_config.get("connection") or get_connection(target_config)
+    cursor = None
+    applied: list[str] = []
+    try:
+        cursor = connection.cursor()
+        for statement in _execution_statements(plan):
+            try:
+                cursor.execute(statement)
+            except Exception as exc:  # noqa: BLE001 - return the database error to the CLI
+                return SchemaExecutionReport(tuple(applied), statement, str(exc))
+            applied.append(statement)
+        commit = getattr(connection, "commit", None)
+        if commit:
+            commit()
+        return SchemaExecutionReport(tuple(applied))
+    finally:
+        if cursor is not None:
+            _close(cursor)
+        connection.close()
