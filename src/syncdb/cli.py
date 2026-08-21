@@ -768,7 +768,8 @@ def print_schema_plan(plan: SchemaPlan) -> None:
             grouped = [operation for operation in selected if operation.category == category]
             if not grouped:
                 continue
-            console.print(f"[bold dim]{category_titles[category]} ({len(grouped)})[/]")
+            console.print()
+            console.print(f"[bold cyan]── {category_titles[category]} ({len(grouped)}) ──[/]")
             for operation in grouped:
                 console.print(f"[{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
                 for detail in operation.details:
