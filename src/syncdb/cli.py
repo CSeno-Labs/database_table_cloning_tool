@@ -1256,24 +1256,8 @@ def interactive_schema(paths: AppPaths) -> int:
     destination = choose_profile(config, "Estrutura das tabelas — banco que será alterado", config.get("defaults", {}).get("destination", ""))
     if destination == "back":
         return MENU_BACK
-    last = read_last_tables(paths, config)
-    if last:
-        table_source = select_option(
-            "Estrutura das tabelas — tabelas",
-            [
-                MenuOption(f"Usar últimas ({', '.join(last)})", "last", "pré-selecionado"),
-                MenuOption("Digitar tabelas", "manual"),
-                MenuOption("Voltar", "back"),
-            ],
-            default_index=0,
-            console=console,
-        )
-        if table_source == "back":
-            return MENU_BACK
-        tables = last if table_source == "last" else parse_tables([input("Tabelas: ")])
-    else:
-        console.print(Panel(f"Modelo: {origin}\nBanco que será alterado: {destination}\nDigite as tabelas para analisar.", title="Estrutura das tabelas", border_style="cyan"))
-        tables = parse_tables([input("Tabelas: ")])
+    console.print(Panel(f"Modelo: {origin}\nBanco que será alterado: {destination}\nDigite as tabelas para analisar.", title="Estrutura das tabelas", border_style="cyan"))
+    tables = parse_tables([input("Tabelas: ")])
     if not tables:
         console.print("[red]ERRO[/] Nenhuma tabela informada.")
         return 2
