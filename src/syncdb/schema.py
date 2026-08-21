@@ -381,6 +381,8 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
             target_position = target_names.index(name)
             source_after = source_names[source_position - 1] if source_position else "início"
             target_after = target_names[target_position - 1] if target_position else "início"
+            if source_after == target_after:
+                continue
             details = (f"destino: depois de {target_after}", f"origem: depois de {source_after}")
             after_sql = f" AFTER {quote_identifier(source_after)}" if source_position else " FIRST"
             sql = f"ALTER TABLE {quote_identifier(diff.table)} MODIFY COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])}{after_sql};"

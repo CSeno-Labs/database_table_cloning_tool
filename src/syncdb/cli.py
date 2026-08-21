@@ -758,18 +758,24 @@ def print_schema_plan(plan: SchemaPlan) -> None:
     styles = {"add": "green", "modify": "yellow", "move": "blue", "drop": "red", "replace": "yellow", "preserve": "cyan"}
     labels = {"column": "coluna", "index": "índice", "foreign_key": "FK", "table_option": "opção da tabela"}
     sections = (("ADICIONAR", {"add"}), ("ALTERAR", {"modify", "replace"}), ("REORDENAR", {"move"}), ("REMOVER", {"drop"}), ("PRESERVAR NO DESTINO", {"preserve"}))
+    category_titles = {"column": "COLUNAS", "index": "ÍNDICES", "foreign_key": "CHAVES E FKs", "table_option": "OPÇÕES DA TABELA"}
     for title, actions in sections:
         selected = [operation for operation in plan.operations if operation.action in actions]
         if not selected:
             continue
         console.print(f"\n[bold]{title} ({len(selected)})[/]")
-        for operation in selected:
-            console.print(f"[{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
-            for detail in operation.details:
-                console.print(f"  [dim]┗> {detail}[/]")
-            if operation.sql:
-                console.print("  [dim]SQL:[/]")
-                console.print(f"  [dim]{operation.sql}[/]")
+        for category in ("column", "index", "foreign_key", "table_option"):
+            grouped = [operation for operation in selected if operation.category == category]
+            if not grouped:
+                continue
+            console.print(f"[bold dim]{category_titles[category]} ({len(grouped)})[/]")
+            for operation in grouped:
+                console.print(f"[{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
+                for detail in operation.details:
+                    console.print(f"  [dim]┗> {detail}[/]")
+                if operation.sql:
+                    console.print("  [dim]SQL:[/]")
+                    console.print(f"  [dim]{operation.sql}[/]")
     if plan.has_destructive_operations:
         console.print("[yellow]Atenção: o plano copy contém remoções no destino.[/]")
 
