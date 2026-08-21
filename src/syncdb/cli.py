@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, SchemaDiff, compare_schema, describe_schema_action, inspect_schema, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, compare_schema, describe_schema_action, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -673,7 +673,8 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         results = []
         for table in tables:
             try:
-                results.append(compare_schema(inspect_schema(origin, table), inspect_schema(destination, table)))
+                source_schema, target_schema = inspect_schema_pair(origin, destination, table)
+                results.append(compare_schema(source_schema, target_schema))
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
@@ -713,6 +714,11 @@ def print_schema_diff(diff: SchemaDiff) -> None:
     for label, names in rows:
         if names:
             console.print(f"[yellow]{label}:[/] {', '.join(names)}")
+    if diff.column_changes:
+        preview = diff.column_changes[:12]
+        details = ", ".join(f"{name} ({'/'.join(reasons)})" for name, reasons in preview)
+        suffix = f"; +{len(diff.column_changes) - len(preview)}" if len(diff.column_changes) > len(preview) else ""
+        console.print(f"[dim]Motivos das diferenças de coluna: {details}{suffix}[/]")
 
 
 def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list, *, sync_type: str = "full_replace", where_clause: str = "") -> Path:

@@ -117,7 +117,7 @@ def test_schema_diff_command_prints_grouped_differences(monkeypatch, tmp_path, c
         "defaults": {"origin": "prod", "destination": "local"},
     }
     monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
-    monkeypatch.setattr("syncdb.cli.inspect_schema", lambda profile, table: source if profile["alias"] == "prod" else target)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
 
     paths = AppPaths.from_base(tmp_path)
     code = cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=["aluno"], file=None, origin="prod", destination="local"))

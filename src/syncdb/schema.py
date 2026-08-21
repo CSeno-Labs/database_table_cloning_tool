@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -37,6 +38,7 @@ class SchemaDiff:
     missing_columns: tuple[str, ...] = ()
     extra_columns: tuple[str, ...] = ()
     changed_columns: tuple[str, ...] = ()
+    column_changes: tuple[tuple[str, tuple[str, ...]], ...] = ()
     reordered_columns: tuple[str, ...] = ()
     missing_indexes: tuple[str, ...] = ()
     extra_indexes: tuple[str, ...] = ()
@@ -169,6 +171,13 @@ def inspect_schema(config: dict[str, Any], table: str) -> SchemaSnapshot:
         conn.close()
 
 
+def inspect_schema_pair(source_config: dict[str, Any], target_config: dict[str, Any], table: str) -> tuple[SchemaSnapshot, SchemaSnapshot]:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="syncdb-schema") as executor:
+        source_future = executor.submit(inspect_schema, source_config, table)
+        target_future = executor.submit(inspect_schema, target_config, table)
+        return source_future.result(), target_future.result()
+
+
 def _compare_named(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any, ...], ...]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     source_map = {str(item[0]): item for item in source}
     target_map = {str(item[0]): item for item in target}
@@ -178,21 +187,27 @@ def _compare_named(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any,
     return missing, extra, changed
 
 
-def _compare_columns(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any, ...], ...]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+def _column_change_reasons(source: tuple[Any, ...], target: tuple[Any, ...]) -> tuple[str, ...]:
+    labels = ("type", "nullable", "default", "extra", "collation")
+    return tuple(label for index, label in enumerate(labels, 1) if source[index] != target[index])
+
+
+def _compare_columns(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any, ...], ...]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]]:
     source_map = {str(item[0]): item for item in source}
     target_map = {str(item[0]): item for item in target}
     missing = tuple(sorted(name for name in source_map if name not in target_map))
     extra = tuple(sorted(name for name in target_map if name not in source_map))
     shared = source_map.keys() & target_map.keys()
-    changed = tuple(sorted(name for name in shared if source_map[name][1:-1] != target_map[name][1:-1]))
+    column_changes = tuple(sorted((name, _column_change_reasons(source_map[name], target_map[name])) for name in shared if source_map[name][1:-1] != target_map[name][1:-1]))
+    changed = tuple(name for name, _ in column_changes)
     reordered = tuple(sorted(name for name in shared if source_map[name][-1] != target_map[name][-1]))
-    return missing, extra, changed, reordered
+    return missing, extra, changed, reordered, column_changes
 
 
 def compare_schema(source: SchemaSnapshot, target: SchemaSnapshot) -> SchemaDiff:
     if not source.exists or not target.exists:
         return SchemaDiff(table=source.table, source_exists=source.exists, target_exists=target.exists)
-    missing_columns, extra_columns, changed_columns, reordered_columns = _compare_columns(source.columns, target.columns)
+    missing_columns, extra_columns, changed_columns, reordered_columns, column_changes = _compare_columns(source.columns, target.columns)
     missing_indexes, extra_indexes, changed_indexes = _compare_named(source.indexes, target.indexes)
     missing_foreign_keys, extra_foreign_keys, changed_foreign_keys = _compare_named(source.foreign_keys, target.foreign_keys)
     source_options = dict(source.table_options)
@@ -205,6 +220,7 @@ def compare_schema(source: SchemaSnapshot, target: SchemaSnapshot) -> SchemaDiff
         missing_columns=missing_columns,
         extra_columns=extra_columns,
         changed_columns=changed_columns,
+        column_changes=column_changes,
         reordered_columns=reordered_columns,
         missing_indexes=missing_indexes,
         extra_indexes=extra_indexes,
