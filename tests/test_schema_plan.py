@@ -41,6 +41,8 @@ def test_copy_plan_adds_changes_reorders_and_removes_extras():
     ]
     assert plan.operations[0].details == ("VARCHAR(20) NULL", "depois de id")
     assert plan.operations[1].details == ("destino: VARCHAR(80) NULL", "origem: VARCHAR(150) NOT NULL")
+    assert plan.operations[0].sql == "ALTER TABLE `pessoa` ADD COLUMN `novo` VARCHAR(20) NULL AFTER `id`;"
+    assert plan.operations[1].sql == "ALTER TABLE `pessoa` MODIFY COLUMN `nome` VARCHAR(150) NOT NULL;"
 
 
 def test_update_plan_preserves_extras_but_still_adds_and_modifies():

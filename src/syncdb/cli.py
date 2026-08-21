@@ -767,6 +767,9 @@ def print_schema_plan(plan: SchemaPlan) -> None:
             console.print(f"[{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
             for detail in operation.details:
                 console.print(f"  [dim]┗> {detail}[/]")
+            if operation.sql:
+                console.print("  [dim]SQL:[/]")
+                console.print(f"  [dim]{operation.sql}[/]")
     if plan.has_destructive_operations:
         console.print("[yellow]Atenção: o plano copy contém remoções no destino.[/]")
 
