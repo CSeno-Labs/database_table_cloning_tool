@@ -83,6 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_table_args(plan)
     plan.add_argument("-o", "--origin", help="Tag do banco modelo/origem")
     plan.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
+    plan.add_argument("--sql", action="store_true", help="Inclui SQL abaixo de cada operação")
+    plan.add_argument("--sql-only", action="store_true", help="Imprime somente o SQL do plano")
     for name, help_text in (
         ("diff", "Mostra diferenças de estrutura sem alterar nada"),
         ("copy", "Copia estrutura da origem; pode alterar e remover extras"),
@@ -704,9 +706,15 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
-        for plan in plans:
-            print_schema_plan(plan)
-        console.print("[yellow]Nenhuma alteração foi feita. Este é apenas o plano de estrutura.[/]")
+        if getattr(args, "sql_only", False):
+            for plan in plans:
+                for operation in plan.operations:
+                    if operation.sql:
+                        console.print(operation.sql)
+        else:
+            for plan in plans:
+                print_schema_plan(plan, show_sql=bool(getattr(args, "sql", False)))
+            console.print("[yellow]Nenhuma alteração foi feita. Este é apenas o plano de estrutura.[/]")
         return 0
 
     if action in {SchemaAction.COPY, SchemaAction.UPDATE}:
@@ -719,7 +727,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
         for plan in plans:
-            print_schema_plan(plan)
+            print_schema_plan(plan, show_sql=True)
         if not getattr(args, "yes", False):
             typed = input("Digite APLICAR para executar este plano: ").strip()
             if typed != "APLICAR":
@@ -781,7 +789,7 @@ def print_schema_timings(source_label: str, source_timings: tuple[tuple[str, flo
     console.print(f"[dim]Tempos de leitura — {text(source_label, source_timings)} | {text(target_label, target_timings)}[/]")
 
 
-def print_schema_plan(plan: SchemaPlan) -> None:
+def print_schema_plan(plan: SchemaPlan, *, show_sql: bool = False) -> None:
     console.print(f"\n[bold cyan]Plano de estrutura: {plan.table} ({plan.action.value})[/]")
     if not plan.operations:
         console.print("[green]Nenhuma alteração necessária.[/]")
@@ -811,7 +819,7 @@ def print_schema_plan(plan: SchemaPlan) -> None:
                 console.print(f"            [{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
                 for detail in operation.details:
                     console.print(f"              [dim]┗> {detail}[/]")
-                if operation.sql:
+                if show_sql and operation.sql:
                     console.print("              [dim]SQL:[/]")
                     for sql_line in operation.sql.splitlines():
                         console.print(f"              [dim]{sql_line}[/]")

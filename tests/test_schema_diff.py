@@ -169,3 +169,28 @@ def test_schema_copy_command_shows_read_only_plan(monkeypatch, tmp_path, capsys)
     assert "+ coluna novo" in shown
     assert "- coluna campo_dev" in shown
     assert "Nenhuma alteração foi feita" in shown
+
+
+def test_schema_plan_sql_flags_control_visual_and_sql_output(monkeypatch, tmp_path, capsys):
+    source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
+    target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
+    config = {
+        "profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    }
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
+    base = dict(schema_command="plan", plan_action="update", tables=["aluno"], file=None, origin="prod", destination="local")
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(**base, sql=False, sql_only=False)) == 0
+    assert "ALTER TABLE" not in capsys.readouterr().out
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(**base, sql=True, sql_only=False)) == 0
+    shown = capsys.readouterr().out
+    assert "Plano de estrutura" in shown
+    assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in shown
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(**base, sql=False, sql_only=True)) == 0
+    shown = capsys.readouterr().out
+    assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in shown
+    assert "Plano de estrutura" not in shown
