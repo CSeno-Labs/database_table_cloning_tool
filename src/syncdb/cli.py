@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, describe_schema_action, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, compare_schema, describe_schema_action, inspect_schema, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -665,17 +665,53 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print(f"[red]ERRO[/] {exc}")
         return 2
 
-    console.print(f"Modelo de estrutura: [bold]{origin}[/]")
-    console.print(f"Banco que será comparado/alterado: [bold]{destination}[/]")
+    console.print(f"Modelo de estrutura: [bold]{origin['alias']}[/]")
+    console.print(f"Banco que será comparado/alterado: [bold]{destination['alias']}[/]")
     console.print(f"Tabelas: {', '.join(tables)}")
 
     if action == SchemaAction.DIFF:
-        console.print("[yellow]schema diff[/] ainda está em implementação. Nenhuma alteração foi feita.")
-        return 0
+        results = []
+        for table in tables:
+            try:
+                results.append(compare_schema(inspect_schema(origin, table), inspect_schema(destination, table)))
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[red]FALHOU[/] {table}: {exc}")
+                return 1
+        for diff in results:
+            print_schema_diff(diff)
+        return 0 if all(diff.source_exists and diff.target_exists for diff in results) else 1
 
     console.print(f"Ação de estrutura: {describe_schema_action(action)}")
     console.print(f"[yellow]schema {action.value}[/] ainda está em implementação. Nenhuma alteração foi feita.")
     return 0
+
+
+def print_schema_diff(diff: SchemaDiff) -> None:
+    console.print(f"\n[bold cyan]Tabela: {diff.table}[/]")
+    if not diff.source_exists:
+        console.print("[red]A tabela não existe na origem.[/]")
+        return
+    if not diff.target_exists:
+        console.print("[yellow]A tabela não existe no destino.[/]")
+        return
+    if diff.is_equal:
+        console.print("[green]Estrutura idêntica.[/]")
+        return
+    rows = (
+        ("Colunas ausentes no destino", diff.missing_columns),
+        ("Colunas diferentes", diff.changed_columns),
+        ("Extras no destino", diff.extra_columns),
+        ("Índices ausentes no destino", diff.missing_indexes),
+        ("Índices diferentes", diff.changed_indexes),
+        ("Índices extras no destino", diff.extra_indexes),
+        ("FKs ausentes no destino", diff.missing_foreign_keys),
+        ("FKs diferentes", diff.changed_foreign_keys),
+        ("FKs extras no destino", diff.extra_foreign_keys),
+        ("Opções da tabela diferentes", diff.changed_table_options),
+    )
+    for label, names in rows:
+        if names:
+            console.print(f"[yellow]{label}:[/] {', '.join(names)}")
 
 
 def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list, *, sync_type: str = "full_replace", where_clause: str = "") -> Path:
