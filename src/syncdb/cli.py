@@ -674,13 +674,14 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         for table in tables:
             try:
                 source_schema, target_schema = inspect_schema_pair(origin, destination, table)
-                results.append(compare_schema(source_schema, target_schema))
+                results.append((compare_schema(source_schema, target_schema), source_schema, target_schema))
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
-        for diff in results:
+        for diff, source_schema, target_schema in results:
             print_schema_diff(diff)
-        return 0 if all(diff.source_exists and diff.target_exists for diff in results) else 1
+            print_schema_timings(origin["alias"], source_schema.timings, destination["alias"], target_schema.timings)
+        return 0 if all(diff.source_exists and diff.target_exists for diff, _, _ in results) else 1
 
     console.print(f"Ação de estrutura: {describe_schema_action(action)}")
     console.print(f"[yellow]schema {action.value}[/] ainda está em implementação. Nenhuma alteração foi feita.")
@@ -719,6 +720,13 @@ def print_schema_diff(diff: SchemaDiff) -> None:
         details = ", ".join(f"{name} ({'/'.join(reasons)})" for name, reasons in preview)
         suffix = f"; +{len(diff.column_changes) - len(preview)}" if len(diff.column_changes) > len(preview) else ""
         console.print(f"[dim]Motivos das diferenças de coluna: {details}{suffix}[/]")
+
+
+def print_schema_timings(source_label: str, source_timings: tuple[tuple[str, float], ...], target_label: str, target_timings: tuple[tuple[str, float], ...]) -> None:
+    def text(label: str, timings: tuple[tuple[str, float], ...]) -> str:
+        return f"{label}: " + ", ".join(f"{name}={seconds:.2f}s" for name, seconds in timings)
+
+    console.print(f"[dim]Tempos de leitura — {text(source_label, source_timings)} | {text(target_label, target_timings)}[/]")
 
 
 def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list, *, sync_type: str = "full_replace", where_clause: str = "") -> Path:

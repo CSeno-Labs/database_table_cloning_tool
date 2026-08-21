@@ -103,6 +103,7 @@ def test_inspect_schema_reads_columns_indexes_foreign_keys_and_options(monkeypat
     assert result.indexes == (("PRIMARY", True, ("id",)),)
     assert result.foreign_keys[0][0] == "fk_aluno_escola"
     assert result.table_options == (("engine", "InnoDB"), ("table_collation", "utf8mb4_unicode_ci"))
+    assert [name for name, _ in result.timings] == ["connect", "columns", "indexes", "foreign_keys", "table_options", "total"]
     assert len(calls) == 4
 
 

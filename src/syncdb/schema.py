@@ -4,6 +4,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+from time import perf_counter
 from typing import Any
 
 from .db import get_connection
@@ -28,6 +29,7 @@ class SchemaSnapshot:
     indexes: tuple[tuple[Any, ...], ...] = ()
     foreign_keys: tuple[tuple[Any, ...], ...] = ()
     table_options: tuple[tuple[str, str], ...] = ()
+    timings: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -121,10 +123,14 @@ def _group_foreign_keys(rows: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ..
 
 
 def inspect_schema(config: dict[str, Any], table: str) -> SchemaSnapshot:
+    total_started = perf_counter()
+    connect_started = perf_counter()
     conn = get_connection(config)
+    timings: list[tuple[str, float]] = [("connect", perf_counter() - connect_started)]
     cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
+        started = perf_counter()
         cursor.execute(f"SHOW FULL COLUMNS FROM {quote_identifier(table)}")
         columns = tuple(
             (
@@ -138,9 +144,13 @@ def inspect_schema(config: dict[str, Any], table: str) -> SchemaSnapshot:
             )
             for index, row in enumerate(cursor.fetchall(), 1)
         )
+        timings.append(("columns", perf_counter() - started))
+        started = perf_counter()
         cursor.execute(f"SHOW INDEX FROM {quote_identifier(table)}")
         indexes = _group_indexes(cursor.fetchall())
+        timings.append(("indexes", perf_counter() - started))
         table_name = table.split(".")[-1]
+        started = perf_counter()
         cursor.execute(
             "SELECT k.CONSTRAINT_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME, "
             "k.REFERENCED_COLUMN_NAME, rc.UPDATE_RULE, rc.DELETE_RULE, k.ORDINAL_POSITION "
@@ -152,6 +162,8 @@ def inspect_schema(config: dict[str, Any], table: str) -> SchemaSnapshot:
             (table_name,),
         )
         foreign_keys = _group_foreign_keys(cursor.fetchall())
+        timings.append(("foreign_keys", perf_counter() - started))
+        started = perf_counter()
         cursor.execute(
             "SELECT ENGINE, TABLE_COLLATION FROM information_schema.TABLES "
             "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
@@ -159,7 +171,9 @@ def inspect_schema(config: dict[str, Any], table: str) -> SchemaSnapshot:
         )
         options_row = cursor.fetchone() or {}
         table_options = tuple((key, str(options_row.get(key.upper()) or "")) for key in ("engine", "table_collation"))
-        return SchemaSnapshot(table=table, exists=True, columns=columns, indexes=indexes, foreign_keys=foreign_keys, table_options=table_options)
+        timings.append(("table_options", perf_counter() - started))
+        timings.append(("total", perf_counter() - total_started))
+        return SchemaSnapshot(table=table, exists=True, columns=columns, indexes=indexes, foreign_keys=foreign_keys, table_options=table_options, timings=tuple(timings))
     except Exception as exc:
         message = str(exc).lower()
         if "doesn't exist" in message or "does not exist" in message or "unknown table" in message:
