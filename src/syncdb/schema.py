@@ -70,6 +70,28 @@ class SchemaDiff:
         ))
 
 
+@dataclass(frozen=True)
+class SchemaPlanOperation:
+    action: str
+    category: str
+    name: str
+
+    @property
+    def destructive(self) -> bool:
+        return self.action == "drop"
+
+
+@dataclass(frozen=True)
+class SchemaPlan:
+    table: str
+    action: SchemaAction
+    operations: tuple[SchemaPlanOperation, ...]
+
+    @property
+    def has_destructive_operations(self) -> bool:
+        return any(operation.destructive for operation in self.operations)
+
+
 def normalize_schema_action(value: str | None) -> SchemaAction:
     raw = (value or "diff").strip().lower()
     if raw in _SCHEMA_ACTIONS:
@@ -267,3 +289,39 @@ def compare_schema(source: SchemaSnapshot, target: SchemaSnapshot) -> SchemaDiff
         changed_foreign_keys=changed_foreign_keys,
         changed_table_options=changed_options,
     )
+
+
+def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str) -> SchemaPlan:
+    action = normalize_schema_action(action.value if isinstance(action, SchemaAction) else action)
+    if action not in {SchemaAction.COPY, SchemaAction.UPDATE}:
+        raise ValueError("Plano automático suporta apenas copy ou update.")
+    if not diff.source_exists or not diff.target_exists:
+        raise ValueError("Não é possível gerar plano automático quando a tabela não existe nos dois bancos.")
+
+    operations: list[SchemaPlanOperation] = []
+    for name in diff.missing_columns:
+        operations.append(SchemaPlanOperation("add", "column", name))
+    for name in diff.changed_columns:
+        operations.append(SchemaPlanOperation("modify", "column", name))
+    for name in diff.reordered_columns:
+        operations.append(SchemaPlanOperation("move", "column", name))
+    for name in diff.extra_columns:
+        operations.append(SchemaPlanOperation("drop" if action == SchemaAction.COPY else "preserve", "column", name))
+
+    for name in diff.missing_indexes:
+        operations.append(SchemaPlanOperation("add", "index", name))
+    for name in diff.changed_indexes:
+        operations.append(SchemaPlanOperation("replace", "index", name))
+    for name in diff.extra_indexes:
+        operations.append(SchemaPlanOperation("drop" if action == SchemaAction.COPY else "preserve", "index", name))
+
+    for name in diff.missing_foreign_keys:
+        operations.append(SchemaPlanOperation("add", "foreign_key", name))
+    for name in diff.changed_foreign_keys:
+        operations.append(SchemaPlanOperation("replace", "foreign_key", name))
+    for name in diff.extra_foreign_keys:
+        operations.append(SchemaPlanOperation("drop" if action == SchemaAction.COPY else "preserve", "foreign_key", name))
+
+    for name in diff.changed_table_options:
+        operations.append(SchemaPlanOperation("modify", "table_option", name))
+    return SchemaPlan(table=diff.table, action=action, operations=tuple(operations))

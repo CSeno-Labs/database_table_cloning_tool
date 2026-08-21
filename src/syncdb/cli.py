@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, SchemaDiff, compare_schema, describe_schema_action, inspect_schema_pair, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, SchemaPlan, build_schema_plan, compare_schema, describe_schema_action, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -90,8 +90,6 @@ def build_parser() -> argparse.ArgumentParser:
         schema_cmd.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
         if name == "diff":
             schema_cmd.add_argument("-v", "--verbose", action="store_true", help="Mostra tempos detalhados de leitura")
-        if name != "diff":
-            schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma aplicação sem prompt interativo")
 
     tables = sub.add_parser("tables", help="Lista tabelas identificadas")
     tables.add_argument("-t", "--tables", nargs="+", help="Tabelas inline")
@@ -686,6 +684,20 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 print_schema_timings(origin["alias"], source_schema.timings, destination["alias"], target_schema.timings)
         return 0 if all(diff.source_exists and diff.target_exists for diff, _, _ in results) else 1
 
+    if action in {SchemaAction.COPY, SchemaAction.UPDATE}:
+        plans = []
+        for table in tables:
+            try:
+                source_schema, target_schema = inspect_schema_pair(origin, destination, table)
+                plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action))
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[red]FALHOU[/] {table}: {exc}")
+                return 1
+        for plan in plans:
+            print_schema_plan(plan)
+        console.print("[yellow]Nenhuma alteração foi feita. Este é apenas o plano de estrutura.[/]")
+        return 0
+
     console.print(f"Ação de estrutura: {describe_schema_action(action)}")
     console.print(f"[yellow]schema {action.value}[/] ainda está em implementação. Nenhuma alteração foi feita.")
     return 0
@@ -730,6 +742,19 @@ def print_schema_timings(source_label: str, source_timings: tuple[tuple[str, flo
         return f"{label}: " + ", ".join(f"{name}={seconds:.2f}s" for name, seconds in timings)
 
     console.print(f"[dim]Tempos de leitura — {text(source_label, source_timings)} | {text(target_label, target_timings)}[/]")
+
+
+def print_schema_plan(plan: SchemaPlan) -> None:
+    console.print(f"\n[bold cyan]Plano de estrutura: {plan.table} ({plan.action.value})[/]")
+    if not plan.operations:
+        console.print("[green]Nenhuma alteração necessária.[/]")
+        return
+    symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~", "preserve": "!"}
+    labels = {"column": "coluna", "index": "índice", "foreign_key": "FK", "table_option": "opção da tabela"}
+    for operation in plan.operations:
+        console.print(f"{symbols[operation.action]} {labels[operation.category]} {operation.name}")
+    if plan.has_destructive_operations:
+        console.print("[yellow]Atenção: o plano copy contém remoções no destino.[/]")
 
 
 def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], engine: str, results: list, *, sync_type: str = "full_replace", where_clause: str = "") -> Path:

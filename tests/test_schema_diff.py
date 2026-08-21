@@ -146,3 +146,26 @@ def test_schema_diff_verbose_prints_timing_breakdown(monkeypatch, tmp_path, caps
     assert cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(schema_command="diff", tables=["aluno"], file=None, origin="prod", destination="local", verbose=True)) == 0
 
     assert "Tempos de leitura" in capsys.readouterr().out
+
+
+def test_schema_copy_command_shows_read_only_plan(monkeypatch, tmp_path, capsys):
+    source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
+    target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("campo_dev", "text", "YES", None, "", None, 2)))
+    config = {
+        "profiles": {
+            "prod": {"host": "prod", "database": "db", "allow_as_origin": True},
+            "local": {"host": "local", "database": "db", "allow_as_destination": True},
+        },
+        "defaults": {"origin": "prod", "destination": "local"},
+    }
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
+
+    code = cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(schema_command="copy", tables=["aluno"], file=None, origin="prod", destination="local", yes=False))
+
+    assert code == 0
+    shown = capsys.readouterr().out
+    assert "Plano de estrutura" in shown
+    assert "+ coluna novo" in shown
+    assert "- coluna campo_dev" in shown
+    assert "Nenhuma alteração foi feita" in shown
