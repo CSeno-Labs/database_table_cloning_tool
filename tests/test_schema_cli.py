@@ -34,6 +34,7 @@ def test_schema_help_exposes_explicit_commands(capsys):
     assert exc.value.code == 0
     shown = capsys.readouterr().out
     assert "diff" in shown
+    assert "plan" in shown
     assert "copy" in shown
     assert "update" in shown
     assert "recreate-table" in shown
@@ -46,6 +47,17 @@ def test_schema_action_help_has_no_mode_or_include(command, capsys):
     parser = build_parser()
     with pytest.raises(SystemExit) as exc:
         parser.parse_args(["schema", command, "--help"])
+
+    assert exc.value.code == 0
+    shown = capsys.readouterr().out
+    assert "--mode" not in shown
+    assert "--include" not in shown
+
+
+def test_schema_plan_copy_has_its_own_command(capsys):
+    parser = build_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["schema", "plan", "copy", "--help"])
 
     assert exc.value.code == 0
     shown = capsys.readouterr().out

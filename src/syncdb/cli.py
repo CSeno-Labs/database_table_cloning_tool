@@ -78,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     schema = sub.add_parser("schema", help="Analisa e sincroniza estrutura de tabelas")
     schema_sub = schema.add_subparsers(dest="schema_command")
+    plan = schema_sub.add_parser("plan", help="Mostra plano de alteração sem modificar o banco")
+    plan.add_argument("plan_action", choices=["copy", "update"], help="Plano para copiar estrutura ou atualizar preservando extras")
+    add_table_args(plan)
+    plan.add_argument("-o", "--origin", help="Tag do banco modelo/origem")
+    plan.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
     for name, help_text in (
         ("diff", "Mostra diferenças de estrutura sem alterar nada"),
         ("copy", "Copia estrutura da origem; pode alterar e remover extras"),
@@ -650,7 +655,7 @@ def cmd_backup(paths: AppPaths, args: argparse.Namespace) -> int:
 def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
     sub = args.schema_command or "diff"
     try:
-        action = normalize_schema_action(sub)
+        action = normalize_schema_action(getattr(args, "plan_action", None) if sub == "plan" else sub)
     except ValueError as exc:
         console.print(f"[red]ERRO[/] {exc}")
         return 2
@@ -684,7 +689,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 print_schema_timings(origin["alias"], source_schema.timings, destination["alias"], target_schema.timings)
         return 0 if all(diff.source_exists and diff.target_exists for diff, _, _ in results) else 1
 
-    if action in {SchemaAction.COPY, SchemaAction.UPDATE}:
+    if sub == "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE}:
         plans = []
         for table in tables:
             try:
@@ -699,7 +704,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         return 0
 
     console.print(f"Ação de estrutura: {describe_schema_action(action)}")
-    console.print(f"[yellow]schema {action.value}[/] ainda está em implementação. Nenhuma alteração foi feita.")
+    console.print(f"[yellow]schema {action.value}[/] ainda não aplica alterações. Rode `sync-db schema plan {action.value}` para revisar o plano.")
     return 0
 
 
@@ -1261,8 +1266,10 @@ def interactive_schema(paths: AppPaths) -> int:
     )
     if choice == "back":
         return MENU_BACK
-    if choice in {"diff", "copy", "update"}:
-        return cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False))
+    if choice == "diff":
+        return cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=tables, file=None, origin=origin, destination=destination, verbose=False))
+    if choice in {"copy", "update"}:
+        return cmd_schema(paths, argparse.Namespace(schema_command="plan", plan_action=choice, tables=tables, file=None, origin=origin, destination=destination))
     if choice == "manual":
         console.print("[yellow]seleção manual[/] será guiada pelo diff: escolha colunas, índices e chaves antes de ver/aplicar o plano SQL.")
         console.print("[yellow]Nenhuma alteração foi feita.[/]")

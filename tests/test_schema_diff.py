@@ -161,7 +161,7 @@ def test_schema_copy_command_shows_read_only_plan(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
 
-    code = cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(schema_command="copy", tables=["aluno"], file=None, origin="prod", destination="local", yes=False))
+    code = cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(schema_command="plan", plan_action="copy", tables=["aluno"], file=None, origin="prod", destination="local", yes=False))
 
     assert code == 0
     shown = capsys.readouterr().out
