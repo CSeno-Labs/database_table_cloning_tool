@@ -88,6 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
         add_table_args(schema_cmd)
         schema_cmd.add_argument("-o", "--origin", help="Tag do banco modelo/origem")
         schema_cmd.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
+        if name == "diff":
+            schema_cmd.add_argument("-v", "--verbose", action="store_true", help="Mostra tempos detalhados de leitura")
         if name != "diff":
             schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma aplicação sem prompt interativo")
 
@@ -680,7 +682,8 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 return 1
         for diff, source_schema, target_schema in results:
             print_schema_diff(diff)
-            print_schema_timings(origin["alias"], source_schema.timings, destination["alias"], target_schema.timings)
+            if getattr(args, "verbose", False):
+                print_schema_timings(origin["alias"], source_schema.timings, destination["alias"], target_schema.timings)
         return 0 if all(diff.source_exists and diff.target_exists for diff, _, _ in results) else 1
 
     console.print(f"Ação de estrutura: {describe_schema_action(action)}")

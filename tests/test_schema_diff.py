@@ -121,9 +121,28 @@ def test_schema_diff_command_prints_grouped_differences(monkeypatch, tmp_path, c
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
 
     paths = AppPaths.from_base(tmp_path)
-    code = cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=["aluno"], file=None, origin="prod", destination="local"))
+    code = cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=["aluno"], file=None, origin="prod", destination="local", verbose=False))
 
     assert code == 0
     shown = capsys.readouterr().out
     assert "Colunas ausentes no destino: idescola" in shown
     assert "Extras no destino: campo_dev" in shown
+    assert "Tempos de leitura" not in shown
+
+
+def test_schema_diff_verbose_prints_timing_breakdown(monkeypatch, tmp_path, capsys):
+    source = SchemaSnapshot(table="aluno", exists=True, timings=(("connect", 0.1), ("total", 0.2)))
+    target = SchemaSnapshot(table="aluno", exists=True, timings=(("connect", 0.3), ("total", 0.4)))
+    config = {
+        "profiles": {
+            "prod": {"host": "prod", "database": "db", "allow_as_origin": True},
+            "local": {"host": "local", "database": "db", "allow_as_destination": True},
+        },
+        "defaults": {"origin": "prod", "destination": "local"},
+    }
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(schema_command="diff", tables=["aluno"], file=None, origin="prod", destination="local", verbose=True)) == 0
+
+    assert "Tempos de leitura" in capsys.readouterr().out
