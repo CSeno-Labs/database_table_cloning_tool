@@ -1174,6 +1174,7 @@ def interactive_schema(paths: AppPaths) -> int:
             MenuOption("Ver diferenças", "diff"),
             MenuOption("Copiar estrutura", "copy", "deixa o destino igual à origem; pode alterar e remover extras"),
             MenuOption("Atualizar preservando extras", "update", "copia a estrutura da origem, mas não remove extras do destino"),
+            MenuOption("Escolher manualmente o que aplicar", "manual", "modo interativo: escolha colunas, índices e chaves após ver o diff"),
             MenuOption("Recriar tabela a partir da origem", "recreate-table", "backup opcional; sem alias no CLI"),
             MenuOption("Voltar", "back"),
         ],
@@ -1183,6 +1184,10 @@ def interactive_schema(paths: AppPaths) -> int:
         return MENU_BACK
     if choice in {"diff", "copy", "update"}:
         return cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False))
+    if choice == "manual":
+        console.print("[yellow]seleção manual[/] será guiada pelo diff: escolha colunas, índices e chaves antes de ver/aplicar o plano SQL.")
+        console.print("[yellow]Nenhuma alteração foi feita.[/]")
+        return 0
     if choice == "recreate-table":
         console.print("[yellow]ATENÇÃO:[/] este modo recria a tabela no destino. Backup é opcional e deve ser feito separadamente se desejado.")
         return cmd_schema(paths, argparse.Namespace(schema_command="recreate-table", tables=tables, file=None, origin=origin, destination=destination, yes=False))
