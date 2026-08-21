@@ -764,13 +764,19 @@ def print_schema_plan(plan: SchemaPlan) -> None:
         if not selected:
             continue
         console.print(f"\n    [bold]{title} ({len(selected)})[/]")
+        printed_category = False
         for category in ("column", "index", "foreign_key", "table_option"):
             grouped = [operation for operation in selected if operation.category == category]
             if not grouped:
                 continue
-            console.print(f"\n        [bold cyan]{category_titles[category]} ({len(grouped)})[/]")
-            for operation in grouped:
-                console.print(f"\n            [{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
+            if printed_category:
+                console.print()
+            printed_category = True
+            console.print(f"        [bold cyan]{category_titles[category]} ({len(grouped)})[/]")
+            for operation_index, operation in enumerate(grouped):
+                if operation_index:
+                    console.print()
+                console.print(f"            [{styles[operation.action]}]{symbols[operation.action]}[/] [bold]{labels[operation.category]}[/] {operation.name}")
                 for detail in operation.details:
                     console.print(f"              [dim]┗> {detail}[/]")
                 if operation.sql:
