@@ -1,4 +1,4 @@
-from syncdb.interactive import MenuOption, apply_menu_key, select_option
+from syncdb.interactive import MenuOption, apply_menu_key, print_menu, select_option
 
 
 def test_apply_menu_key_wraps_with_arrows():
@@ -85,6 +85,21 @@ def test_select_option_tty_does_not_style_description_like_selected_item(monkeyp
     assert ("clear", None, None) not in calls
     assert ("print", "➤ 1. Item", "reverse bold") in calls
     assert ("print", "      ┗> resposta", "") in calls
+
+
+def test_print_menu_keeps_one_blank_line_between_items():
+    calls = []
+
+    class FakeConsole:
+        def print(self, text="", style=""):
+            calls.append(str(text))
+
+    print_menu(FakeConsole(), "Menu", [MenuOption("Sem detalhe", "a"), MenuOption("Com detalhe", "b", "descrição"), MenuOption("Voltar", "back")], 0)
+
+    first = calls.index("➤ 1. Sem detalhe")
+    second = calls.index("  2. Com detalhe")
+    assert calls[first + 1] == ""
+    assert calls[second + 2] == ""
 
 
 def test_advanced_mode_options_allow_dump_only_without_partial_sync():

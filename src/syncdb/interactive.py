@@ -100,6 +100,7 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
         lines.append(Text(f"{marker} {idx + 1}. {option.label}", style=style))
         if option.description:
             lines.append(Text(f"      ┗> {option.description}"))
+        if idx < len(option_list) - 1:
             lines.append(Text(""))
     if footer:
         lines.append(Text(""))
@@ -116,6 +117,7 @@ def print_menu(console: Console, title: str, option_list: list[MenuOption], inde
         console.print(f"{marker} {idx + 1}. {option.label}", style=style)
         if option.description:
             console.print(f"      ┗> {option.description}")
+        if idx < len(option_list) - 1:
             console.print()
     if footer:
         console.print(f"\n[dim]{footer}[/]")

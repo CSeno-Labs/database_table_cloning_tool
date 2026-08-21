@@ -54,3 +54,27 @@ def test_interactive_schema_manual_action_is_guided_and_does_not_apply_yet(monke
     shown = capsys.readouterr().out
     assert "seleção manual" in shown
     assert "Nenhuma alteração foi feita" in shown
+
+
+def test_interactive_schema_preselects_last_tables(monkeypatch, tmp_path):
+    paths = app_paths(tmp_path)
+    choices = []
+
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: {
+        "profiles": {"prod": {"label": "Prod"}, "local": {"label": "Local"}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    })
+    monkeypatch.setattr("syncdb.cli.choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr("syncdb.cli.read_last_tables", lambda paths, config: ["pessoa", "func_geral"])
+
+    def fake_select(title, options, **kwargs):
+        choices.append((title, [option.label for option in options], kwargs.get("default_index")))
+        return "last" if title.endswith("— tabelas") else "back"
+
+    monkeypatch.setattr("syncdb.cli.select_option", fake_select)
+
+    assert interactive_schema(paths) == -1000
+    title, labels, default_index = choices[0]
+    assert "tabelas" in title
+    assert labels[0] == "Usar últimas (pessoa, func_geral)"
+    assert default_index == 0
