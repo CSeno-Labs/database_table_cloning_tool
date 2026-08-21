@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, SchemaDiff, SchemaPlan, build_schema_plan, compare_schema, describe_schema_action, execute_schema_plan, inspect_schema_pair, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, build_schema_plan, compare_schema, describe_schema_action, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -83,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_table_args(plan)
     plan.add_argument("-o", "--origin", help="Tag do banco modelo/origem")
     plan.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
-    plan.add_argument("--sql", action="store_true", help="Inclui SQL abaixo de cada operação")
+    plan.add_argument("--sql", action="store_true", help="Inclui bloco SQL FINAL após o plano")
+    plan.add_argument("--no-sql", action="store_true", help="Oculta SQL abaixo de cada operação")
     plan.add_argument("--sql-only", action="store_true", help="Imprime somente o SQL do plano")
     for name, help_text in (
         ("diff", "Mostra diferenças de estrutura sem alterar nada"),
@@ -97,6 +98,9 @@ def build_parser() -> argparse.ArgumentParser:
         schema_cmd.add_argument("-d", "--destination", help="Tag do banco que será alterado/comparado")
         if name in {"copy", "update"}:
             schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma a aplicação do plano de estrutura")
+            schema_cmd.add_argument("--sql", action="store_true", help="Inclui bloco SQL FINAL antes da confirmação")
+            schema_cmd.add_argument("--no-sql", action="store_true", help="Oculta SQL abaixo de cada operação")
+            schema_cmd.add_argument("--sql-only", action="store_true", help="Imprime somente o SQL antes da confirmação")
         if name == "diff":
             schema_cmd.add_argument("-v", "--verbose", action="store_true", help="Mostra tempos detalhados de leitura")
 
@@ -678,9 +682,11 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print("[red]ERRO[/] schema copy/update em modo não interativo exige -y/--yes.")
         return 2
 
-    console.print(f"Modelo de estrutura: [bold]{origin['alias']}[/]")
-    console.print(f"Banco que será comparado/alterado: [bold]{destination['alias']}[/]")
-    console.print(f"Tabelas: {', '.join(tables)}")
+    sql_only = bool(getattr(args, "sql_only", False))
+    if not sql_only:
+        console.print(f"Modelo de estrutura: [bold]{origin['alias']}[/]")
+        console.print(f"Banco que será comparado/alterado: [bold]{destination['alias']}[/]")
+        console.print(f"Tabelas: {', '.join(tables)}")
 
     if action == SchemaAction.DIFF:
         results = []
@@ -706,14 +712,13 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
-        if getattr(args, "sql_only", False):
-            for plan in plans:
-                for operation in plan.operations:
-                    if operation.sql:
-                        console.print(operation.sql)
+        if sql_only:
+            print_schema_final_sql(plans, heading=False)
         else:
             for plan in plans:
-                print_schema_plan(plan, show_sql=bool(getattr(args, "sql", False)))
+                print_schema_plan(plan, show_sql=not bool(getattr(args, "no_sql", False)))
+            if getattr(args, "sql", False):
+                print_schema_final_sql(plans)
             console.print("[yellow]Nenhuma alteração foi feita. Este é apenas o plano de estrutura.[/]")
         return 0
 
@@ -726,8 +731,13 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
-        for plan in plans:
-            print_schema_plan(plan, show_sql=True)
+        if sql_only:
+            print_schema_final_sql(plans, heading=False)
+        else:
+            for plan in plans:
+                print_schema_plan(plan, show_sql=not bool(getattr(args, "no_sql", False)))
+            if getattr(args, "sql", False):
+                print_schema_final_sql(plans)
         if not getattr(args, "yes", False):
             typed = input("Digite APLICAR para executar este plano: ").strip()
             if typed != "APLICAR":
@@ -787,6 +797,18 @@ def print_schema_timings(source_label: str, source_timings: tuple[tuple[str, flo
         return f"{label}: " + ", ".join(f"{name}={seconds:.2f}s" for name, seconds in timings)
 
     console.print(f"[dim]Tempos de leitura — {text(source_label, source_timings)} | {text(target_label, target_timings)}[/]")
+
+
+def print_schema_final_sql(plans: list[SchemaPlan], *, heading: bool = True) -> None:
+    statements = [statement for plan in plans for statement in _execution_statements(plan)]
+    if not statements:
+        return
+    if heading:
+        console.print("\n[bold cyan]SQL FINAL[/]")
+    for index, statement in enumerate(statements):
+        if index:
+            console.print()
+        console.print(statement)
 
 
 def print_schema_plan(plan: SchemaPlan, *, show_sql: bool = False) -> None:
