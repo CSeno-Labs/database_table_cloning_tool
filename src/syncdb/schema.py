@@ -372,7 +372,19 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
         sql = f"ALTER TABLE {quote_identifier(diff.table)} MODIFY COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])};" if name in source_columns else ""
         operations.append(SchemaPlanOperation("modify", "column", name, details, sql))
     for name in diff.reordered_columns:
-        operations.append(SchemaPlanOperation("move", "column", name))
+        details = ()
+        sql = ""
+        if name in source_columns and name in target_columns:
+            source_names = [str(column[0]) for column in source.columns] if source else []
+            target_names = [str(column[0]) for column in target.columns] if target else []
+            source_position = source_names.index(name)
+            target_position = target_names.index(name)
+            source_after = source_names[source_position - 1] if source_position else "início"
+            target_after = target_names[target_position - 1] if target_position else "início"
+            details = (f"destino: depois de {target_after}", f"origem: depois de {source_after}")
+            after_sql = f" AFTER {quote_identifier(source_after)}" if source_position else " FIRST"
+            sql = f"ALTER TABLE {quote_identifier(diff.table)} MODIFY COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])}{after_sql};"
+        operations.append(SchemaPlanOperation("move", "column", name, details, sql))
     for name in diff.extra_columns:
         operation = "drop" if action == SchemaAction.COPY else "preserve"
         sql = f"ALTER TABLE {quote_identifier(diff.table)} DROP COLUMN {quote_identifier(name)};" if operation == "drop" else ""

@@ -64,3 +64,15 @@ def test_update_plan_preserves_extras_but_still_adds_and_modifies():
         ("preserve", "index", "idx_dev"),
     ]
     assert plan.has_destructive_operations is False
+
+
+def test_plan_generates_sql_for_real_column_reordering():
+    source = snapshot(columns=(("id", "int", "NO", None, "", None, 1), ("nome", "varchar(100)", "NO", None, "", None, 2), ("email", "varchar(100)", "YES", None, "", None, 3)))
+    target = snapshot(columns=(("id", "int", "NO", None, "", None, 1), ("email", "varchar(100)", "YES", None, "", None, 2), ("nome", "varchar(100)", "NO", None, "", None, 3)))
+
+    plan = build_schema_plan(compare_schema(source, target), action="copy", source=source, target=target)
+    move = next(item for item in plan.operations if item.action == "move")
+
+    assert move.name == "email"
+    assert move.details == ("destino: depois de id", "origem: depois de nome")
+    assert move.sql == "ALTER TABLE `pessoa` MODIFY COLUMN `email` VARCHAR(100) NULL AFTER `nome`;"
