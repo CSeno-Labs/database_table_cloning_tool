@@ -73,8 +73,8 @@ def test_inspect_schema_reads_columns_indexes_foreign_keys_and_options(monkeypat
                 self.rows = [{"Field": "id", "Type": "int", "Null": "NO", "Default": None, "Extra": "auto_increment", "Collation": None, "Ordinal": 1}]
             elif "SHOW INDEX" in sql:
                 self.rows = [{"Key_name": "PRIMARY", "Non_unique": 0, "Column_name": "id", "Seq_in_index": 1}]
-            elif "KEY_COLUMN_USAGE" in sql:
-                self.rows = [{"CONSTRAINT_NAME": "fk_aluno_escola", "COLUMN_NAME": "idescola", "REFERENCED_TABLE_NAME": "escola", "REFERENCED_COLUMN_NAME": "id", "UPDATE_RULE": "RESTRICT", "DELETE_RULE": "CASCADE", "ORDINAL_POSITION": 1}]
+            elif "SHOW CREATE TABLE" in sql:
+                self.rows = [{"Create Table": "CREATE TABLE `aluno` (`idescola` int, CONSTRAINT `fk_aluno_escola` FOREIGN KEY (`idescola`) REFERENCES `escola` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT)"}]
             else:
                 self.rows = [{"ENGINE": "InnoDB", "TABLE_COLLATION": "utf8mb4_unicode_ci"}]
 

@@ -4,6 +4,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+import re
 from time import perf_counter
 from typing import Any
 
@@ -122,7 +123,36 @@ def _group_foreign_keys(rows: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ..
     return tuple(sorted(result, key=lambda item: item[0]))
 
 
-def inspect_schema(config: dict[str, Any], table: str) -> SchemaSnapshot:
+_FOREIGN_KEY_RE = re.compile(
+    r"CONSTRAINT\s+`(?P<name>[^`]+)`\s+FOREIGN\s+KEY\s*\((?P<columns>[^)]+)\)\s+"
+    r"REFERENCES\s+`(?P<table>[^`]+)`\s*\((?P<referenced_columns>[^)]+)\)(?P<rules>.*?)"
+    r"(?=,\s*(?:CONSTRAINT|KEY|UNIQUE|PRIMARY)|\s*\)|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _identifiers_from_sql(value: str) -> tuple[str, ...]:
+    return tuple(part.strip().strip("`") for part in value.split(","))
+
+
+def parse_foreign_keys_from_create(create_sql: str) -> tuple[tuple[Any, ...], ...]:
+    foreign_keys = []
+    for match in _FOREIGN_KEY_RE.finditer(create_sql):
+        rules = match.group("rules")
+        update = re.search(r"ON\s+UPDATE\s+(RESTRICT|CASCADE|SET\s+NULL|NO\s+ACTION)", rules, re.IGNORECASE)
+        delete = re.search(r"ON\s+DELETE\s+(RESTRICT|CASCADE|SET\s+NULL|NO\s+ACTION)", rules, re.IGNORECASE)
+        foreign_keys.append((
+            match.group("name"),
+            _identifiers_from_sql(match.group("columns")),
+            match.group("table"),
+            _identifiers_from_sql(match.group("referenced_columns")),
+            (update.group(1).upper() if update else "RESTRICT"),
+            (delete.group(1).upper() if delete else "RESTRICT"),
+        ))
+    return tuple(sorted(foreign_keys, key=lambda item: item[0]))
+
+
+def inspect_schema(config: dict[str, Any], table: str):
     total_started = perf_counter()
     connect_started = perf_counter()
     conn = get_connection(config)
@@ -151,17 +181,10 @@ def inspect_schema(config: dict[str, Any], table: str) -> SchemaSnapshot:
         timings.append(("indexes", perf_counter() - started))
         table_name = table.split(".")[-1]
         started = perf_counter()
-        cursor.execute(
-            "SELECT k.CONSTRAINT_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME, "
-            "k.REFERENCED_COLUMN_NAME, rc.UPDATE_RULE, rc.DELETE_RULE, k.ORDINAL_POSITION "
-            "FROM information_schema.KEY_COLUMN_USAGE k "
-            "JOIN information_schema.REFERENTIAL_CONSTRAINTS rc "
-            "ON rc.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND rc.CONSTRAINT_NAME = k.CONSTRAINT_NAME "
-            "WHERE k.TABLE_SCHEMA = DATABASE() AND k.TABLE_NAME = %s "
-            "AND k.REFERENCED_TABLE_NAME IS NOT NULL",
-            (table_name,),
-        )
-        foreign_keys = _group_foreign_keys(cursor.fetchall())
+        cursor.execute(f"SHOW CREATE TABLE {quote_identifier(table)}")
+        create_row = cursor.fetchone() or {}
+        create_sql = create_row.get("Create Table", "") if isinstance(create_row, dict) else create_row[1]
+        foreign_keys = parse_foreign_keys_from_create(str(create_sql))
         timings.append(("foreign_keys", perf_counter() - started))
         started = perf_counter()
         cursor.execute(
