@@ -1373,6 +1373,99 @@ def interactive_backup(paths: AppPaths) -> int:
         globals()["suggested_backup_name"] = original
 
 
+def _manual_schema_operation_options(plan: SchemaPlan, selected: set[int]) -> list[MenuOption]:
+    symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~"}
+    labels = {"column": "coluna", "index": "índice", "foreign_key": "FK", "table_option": "opção da tabela"}
+    options: list[MenuOption] = []
+    for index, operation in enumerate(plan.operations):
+        if operation.action == "preserve" or not operation.sql:
+            continue
+        mark = "[x]" if index in selected else "[ ]"
+        group = f"{operation.action.upper()} — {labels.get(operation.category, operation.category).upper()}"
+        details = "; ".join(operation.details) or group
+        options.append(MenuOption(f"{mark} {symbols.get(operation.action, '?')} {labels.get(operation.category, operation.category)} {operation.name}", f"toggle:{index}", f"{group}. {details}"))
+    options.extend((
+        MenuOption("Revisar/aplicar selecionadas", "review"),
+        MenuOption("Voltar", "back"),
+    ))
+    return options
+
+
+def interactive_manual_schema_selection(config: dict, origin_tag: str, destination_tag: str, tables: list[str]) -> int:
+    """Inspect a fresh base plan, then execute only explicitly selected operations."""
+    base_choice = select_option(
+        "Plano base da seleção manual",
+        [
+            MenuOption("Atualizar preservando extras (recomendado)", "update", "adiciona/altera a partir da origem sem remover extras do destino"),
+            MenuOption("Copiar estrutura completa", "copy", "inclui remoções de extras do destino"),
+            MenuOption("Voltar", "back"),
+        ],
+        console=console,
+    )
+    if base_choice == "back":
+        return MENU_BACK
+    action = SchemaAction(base_choice)
+    origin = dict(config["profiles"][origin_tag])
+    origin["alias"] = origin_tag
+    destination = dict(config["profiles"][destination_tag])
+    destination["alias"] = destination_tag
+    plans: list[SchemaPlan] = []
+    for table in tables:
+        try:
+            source_schema, target_schema = inspect_schema_pair(origin, destination, table)
+            plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action, source=source_schema, target=target_schema))
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]FALHOU[/] {table}: {exc}")
+            return 1
+
+    selected_by_table: dict[str, set[int]] = {plan.table: set() for plan in plans}
+    for plan in plans:
+        selected = selected_by_table[plan.table]
+        while True:
+            choice = select_option(
+                f"Seleção manual — {plan.table}",
+                _manual_schema_operation_options(plan, selected),
+                console=console,
+                footer="[x] selecionada; [ ] não será aplicada. As operações são agrupadas por ação e categoria.",
+            )
+            if choice == "back":
+                return MENU_BACK
+            if choice == "review":
+                break
+            if isinstance(choice, str) and choice.startswith("toggle:"):
+                index = int(choice.removeprefix("toggle:"))
+                if index in selected:
+                    selected.remove(index)
+                else:
+                    selected.add(index)
+
+    selected_plans = [
+        SchemaPlan(plan.table, plan.action, tuple(operation for index, operation in enumerate(plan.operations) if index in selected_by_table[plan.table]))
+        for plan in plans
+    ]
+    if not any(plan.operations for plan in selected_plans):
+        console.print("[yellow]Nenhuma operação foi selecionada. Nenhuma alteração foi feita.[/]")
+        return 0
+    console.print("\n[bold cyan]Revisão das operações selecionadas[/]")
+    for plan in selected_plans:
+        if plan.operations:
+            print_schema_plan(plan, show_sql=True)
+    typed = input("Digite APLICAR para executar as operações selecionadas: ").strip()
+    if typed.upper() != "APLICAR":
+        console.print("Cancelado. Nenhuma alteração foi feita.")
+        return 1
+    for plan in selected_plans:
+        if not plan.operations:
+            continue
+        report = execute_schema_plan(destination, plan)
+        if not report.ok:
+            console.print(f"[red]FALHOU[/] {plan.table}: após {len(report.applied)} SQL aplicado(s), falhou: {report.failed}")
+            console.print(f"[red]ERRO[/] {report.error}")
+            return 1
+        console.print(f"[green]OK[/] {plan.table}: {len(report.applied)} SQL aplicado(s).")
+    return 0
+
+
 def interactive_schema(paths: AppPaths) -> int:
     config = load_config(paths)
     origin = choose_profile(config, "Estrutura das tabelas — modelo/origem", config.get("defaults", {}).get("origin", ""))
@@ -1405,9 +1498,7 @@ def interactive_schema(paths: AppPaths) -> int:
     if choice in {"copy", "update"}:
         return cmd_schema(paths, argparse.Namespace(schema_command="plan", plan_action=choice, tables=tables, file=None, origin=origin, destination=destination))
     if choice == "manual":
-        console.print("[yellow]seleção manual[/] será guiada pelo diff: escolha colunas, índices e chaves antes de ver/aplicar o plano SQL.")
-        console.print("[yellow]Nenhuma alteração foi feita.[/]")
-        return 0
+        return interactive_manual_schema_selection(config, origin, destination, tables)
     if choice == "recreate-table":
         console.print("[yellow]ATENÇÃO:[/] este modo recria a tabela no destino. Backup é opcional e deve ser feito separadamente se desejado.")
         return cmd_schema(paths, argparse.Namespace(schema_command="recreate-table", tables=tables, file=None, origin=origin, destination=destination, yes=False))
