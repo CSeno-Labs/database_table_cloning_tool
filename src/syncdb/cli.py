@@ -684,7 +684,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         return 2
 
     sql_only = bool(getattr(args, "sql_only", False))
-    if not sql_only:
+    if not sql_only and not getattr(args, "save", None):
         console.print(f"Modelo de estrutura: [bold]{origin['alias']}[/]")
         console.print(f"Banco que será comparado/alterado: [bold]{destination['alias']}[/]")
         console.print(f"Tabelas: {', '.join(tables)}")
@@ -724,8 +724,8 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 render_schema_plan_sql_file(plans, origin=origin["alias"], destination=destination["alias"], include_final_sql=bool(getattr(args, "sql", False)), show_item_sql=not bool(getattr(args, "no_sql", False)), sql_only=sql_only),
                 encoding="utf-8",
             )
-            if not sql_only:
-                console.print(f"[green]Plano salvo:[/] {output_path}")
+            console.print(f"[green]Plano salvo:[/] {output_path}")
+            return 0
         if sql_only:
             print_schema_final_sql(plans, heading=False)
         else:

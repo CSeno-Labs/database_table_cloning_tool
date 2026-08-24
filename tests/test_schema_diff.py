@@ -226,7 +226,7 @@ def test_saved_schema_plan_is_executable_and_documents_sql_modes():
     assert sql_only == "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;\n"
 
 
-def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path):
+def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path, capsys):
     source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
     target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
     config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
@@ -236,6 +236,9 @@ def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path):
     args = argparse.Namespace(schema_command="plan", plan_action="update", tables=["aluno"], file=None, origin="prod", destination="local", sql=False, no_sql=False, sql_only=False, save=str(output))
 
     assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
+    shown = capsys.readouterr().out
+    assert "Plano salvo:" in shown
+    assert "Plano de estrutura" not in shown
     content = output.read_text(encoding="utf-8")
     assert "-- Plano de estrutura: aluno (update)" in content
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in content
