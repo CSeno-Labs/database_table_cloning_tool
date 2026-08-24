@@ -754,15 +754,8 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 print_schema_final_sql(plans)
         if not getattr(args, "yes", False):
             if getattr(args, "interactive", False):
-                choice = select_option(
-                    "Aplicar plano de estrutura?",
-                    [
-                        MenuOption("Aplicar alterações", "apply", "continua para a confirmação digitada"),
-                        MenuOption("Voltar", "back", "retorna ao menu de estrutura sem alterar nada"),
-                    ],
-                    console=console,
-                )
-                if choice != "apply":
+                choice = input("Aplicar plano? [a]plicar/[v]oltar: ").strip().lower()
+                if choice not in {"a", "aplicar", "apply"}:
                     console.print("Cancelado. Nenhuma alteração foi feita.")
                     return 0
             typed = input("Digite APLICAR para executar este plano: ").strip()

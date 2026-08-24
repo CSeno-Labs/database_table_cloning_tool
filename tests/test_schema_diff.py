@@ -244,16 +244,21 @@ def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path, caps
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in content
 
 
-def test_interactive_schema_update_asks_apply_or_back_before_typed_confirmation(monkeypatch, tmp_path):
+def test_interactive_schema_update_uses_simple_typed_confirmation_after_printed_plan(monkeypatch, tmp_path, capsys):
     source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
     target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
     config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
-    selected_titles = []
+    executed = []
+    prompts = []
     monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
-    monkeypatch.setattr("syncdb.cli.select_option", lambda title, options, **kwargs: selected_titles.append(title) or "back")
-    monkeypatch.setattr("syncdb.cli.execute_schema_plan", lambda *args: (_ for _ in ()).throw(AssertionError("não deve executar")))
+    monkeypatch.setattr("syncdb.cli.select_option", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("interactive confirmation must not open a Live menu")))
+    answers = iter(("a", "aplicar"))
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or next(answers))
+    monkeypatch.setattr("syncdb.cli.execute_schema_plan", lambda *args: executed.append(args) or type("Report", (), {"ok": True, "applied": (), "failed": None, "error": ""})())
     args = argparse.Namespace(schema_command="update", tables=["aluno"], file=None, origin="prod", destination="local", yes=False, sql=False, no_sql=False, sql_only=False, interactive=True)
 
     assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
-    assert selected_titles == ["Aplicar plano de estrutura?"]
+    assert prompts == ["Aplicar plano? [a]plicar/[v]oltar: ", "Digite APLICAR para executar este plano: "]
+    assert len(executed) == 1
+    assert "Plano de estrutura: aluno (update)" in capsys.readouterr().out
