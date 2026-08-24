@@ -15,6 +15,7 @@ from syncdb.cli import (
     cmd_doctor,
     confirm,
     format_sync_context,
+    interactive_language,
     main,
     print_schema_plan,
     set_config_language,
@@ -45,6 +46,15 @@ def test_existing_config_migrates_language_and_menu_helper_persists_english(tmp_
     assert load_config(paths)["language"] == "en"
 
 
+def test_interactive_language_menu_uses_current_language_without_name_error(monkeypatch, tmp_path):
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    paths.config_file.write_text(json.dumps({"language": "en", "profiles": {}}), encoding="utf-8")
+    monkeypatch.setattr("syncdb.cli.select_option", lambda *args, **kwargs: "back")
+
+    assert interactive_language(paths) == 0
+
+
 def test_global_lang_override_uses_english_help_without_persisting(tmp_path, capsys):
     config_path = tmp_path / "config" / "config.json"
     main(["--config", str(config_path), "init", "--quiet"])
@@ -56,6 +66,16 @@ def test_global_lang_override_uses_english_help_without_persisting(tmp_path, cap
     assert exc.value.code == 0
     assert "Analyze and synchronize table structure" in capsys.readouterr().out
     assert config_path.read_text(encoding="utf-8") == before
+
+
+def test_language_cli_accepts_pt_en_and_lag_alias(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--lag", "en", "--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "--lang {pt,en}" in output
+    assert "--lag {pt,en}" in output
 
 
 def test_saved_english_language_localizes_top_level_help_before_parser_construction(tmp_path, capsys):

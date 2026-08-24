@@ -20,14 +20,14 @@ from .config import ConfigError, ensure_config, load_config, profile_tag, redact
 from .db import test_connection
 from .engine import drop_table, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
 from .interactive import MenuOption, read_text_or_back, select_option
-from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_language, set_language, t
+from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, get_language, normalize_language, set_language, t
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
 from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.0.1"
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
 
@@ -47,9 +47,12 @@ def sync_progress(total: int) -> Progress:
     )
 
 
+LANGUAGE_CLI_CHOICES = ("pt", "en", "pt-BR")
+
+
 def _add_language_arguments(parser: argparse.ArgumentParser) -> None:
     """Accept --lang before or after any subcommand without changing config."""
-    parser.add_argument("--lang", choices=SUPPORTED_LANGUAGES, default=argparse.SUPPRESS, help=t("help.language"))
+    parser.add_argument("--lang", "--lag", choices=LANGUAGE_CLI_CHOICES, metavar="{pt,en}", default=argparse.SUPPRESS, help=t("help.language"))
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             for child in action.choices.values():
@@ -58,9 +61,9 @@ def _add_language_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _language_override(argv: list[str]) -> str | None:
     for index, value in enumerate(argv):
-        if value == "--lang" and index + 1 < len(argv):
+        if value in {"--lang", "--lag"} and index + 1 < len(argv):
             return normalize_language(argv[index + 1])
-        if value.startswith("--lang="):
+        if value.startswith("--lang=") or value.startswith("--lag="):
             return normalize_language(value.partition("=")[2])
     return None
 
@@ -84,7 +87,7 @@ def _paths_from_argv(argv: list[str]) -> AppPaths:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sync-db", description=t("app.description"))
-    parser.add_argument("--version", action="store_true", help=t("help.version"))
+    parser.add_argument("--version", "-v", action="store_true", help=t("help.version"))
     parser.add_argument("--config", help=t("help.config"))
     sub = parser.add_subparsers(dest="command")
 
