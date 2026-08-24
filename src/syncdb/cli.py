@@ -26,7 +26,7 @@ from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements,
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
-APP_VERSION = "2.1.1"
+APP_VERSION = "3.0.0"
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
 

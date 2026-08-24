@@ -5,11 +5,11 @@ from syncdb.cli import main
 EXE_PATH = "C:/fake/local/bin/sync-db.exe"
 
 
-def test_version_flag_reports_2_1_1(capsys):
+def test_version_flag_reports_3_0_0(capsys):
     code = main(["--version"])
 
     assert code == 0
-    assert "sync-db 2.1.1" in capsys.readouterr().out
+    assert "sync-db 3.0.0" in capsys.readouterr().out
 
 
 def test_update_reinstalls_from_main_with_uv(monkeypatch, capsys):
