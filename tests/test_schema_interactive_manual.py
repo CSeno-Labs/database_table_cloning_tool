@@ -65,10 +65,10 @@ def test_interactive_schema_offers_manual_selection_without_cli_action(monkeypat
 def test_interactive_manual_selects_only_one_operation_and_executes_it(monkeypatch, tmp_path):
     paths = app_paths(tmp_path)
     cursor = FakeCursor()
-    plan = SchemaPlan("aluno", SchemaAction.UPDATE, (
+    plan = SchemaPlan("aluno", SchemaAction.COPY, (
         SchemaPlanOperation("add", "column", "nome", sql="ALTER TABLE `aluno` ADD COLUMN `nome` VARCHAR(100);"),
         SchemaPlanOperation("modify", "column", "email", sql="ALTER TABLE `aluno` MODIFY COLUMN `email` VARCHAR(255);"),
-        SchemaPlanOperation("preserve", "column", "legacy", sql="ALTER TABLE `aluno` DROP COLUMN `legacy`;"),
+        SchemaPlanOperation("drop", "column", "legacy", sql="ALTER TABLE `aluno` DROP COLUMN `legacy`;"),
     ))
     calls = []
     inputs = iter(("aluno", "aplicar"))
@@ -86,19 +86,19 @@ def test_interactive_manual_selects_only_one_operation_and_executes_it(monkeypat
     monkeypatch.setattr("syncdb.cli.compare_schema", lambda *args: object())
     monkeypatch.setattr("syncdb.cli.build_schema_plan", lambda diff, action, **kwargs: calls.append(action) or plan)
 
-    selections = iter(("manual", "update", "toggle:0", "review"))
+    selections = iter(("manual", "toggle:0", "review"))
     monkeypatch.setattr("syncdb.cli.select_option", lambda title, options, **kwargs: next(selections))
 
     assert interactive_schema(paths) == 0
-    assert calls == [SchemaAction.UPDATE]
+    assert calls == [SchemaAction.COPY]
     assert cursor.executed == ["ALTER TABLE `aluno` ADD COLUMN `nome` VARCHAR(100);"]
 
 
-def test_interactive_manual_update_does_not_offer_preserve_operations(monkeypatch, tmp_path):
+def test_interactive_manual_copy_offers_removal_operations(monkeypatch, tmp_path):
     paths = app_paths(tmp_path)
-    plan = SchemaPlan("aluno", SchemaAction.UPDATE, (
+    plan = SchemaPlan("aluno", SchemaAction.COPY, (
         SchemaPlanOperation("add", "column", "nome", sql="ALTER TABLE `aluno` ADD COLUMN `nome` VARCHAR(100);"),
-        SchemaPlanOperation("preserve", "column", "legacy", sql="ALTER TABLE `aluno` DROP COLUMN `legacy`;"),
+        SchemaPlanOperation("drop", "column", "legacy", sql="ALTER TABLE `aluno` DROP COLUMN `legacy`;"),
     ))
     inputs = iter(("aluno",))
     operation_labels = []
@@ -113,7 +113,7 @@ def test_interactive_manual_update_does_not_offer_preserve_operations(monkeypatc
     monkeypatch.setattr("syncdb.cli.compare_schema", lambda *args: object())
     monkeypatch.setattr("syncdb.cli.build_schema_plan", lambda *args, **kwargs: plan)
 
-    selections = iter(("manual", "update", "back"))
+    selections = iter(("manual", "back"))
 
     def select(title, options, **kwargs):
         if title.startswith("Seleção manual"):
@@ -123,4 +123,4 @@ def test_interactive_manual_update_does_not_offer_preserve_operations(monkeypatc
     monkeypatch.setattr("syncdb.cli.select_option", select)
 
     assert interactive_schema(paths) == -1000
-    assert all("legacy" not in label for label in operation_labels)
+    assert any("legacy" in label for label in operation_labels)

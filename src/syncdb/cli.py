@@ -1392,19 +1392,8 @@ def _manual_schema_operation_options(plan: SchemaPlan, selected: set[int]) -> li
 
 
 def interactive_manual_schema_selection(config: dict, origin_tag: str, destination_tag: str, tables: list[str]) -> int:
-    """Inspect a fresh base plan, then execute only explicitly selected operations."""
-    base_choice = select_option(
-        "Plano base da seleção manual",
-        [
-            MenuOption("Atualizar preservando extras (recomendado)", "update", "adiciona/altera a partir da origem sem remover extras do destino"),
-            MenuOption("Copiar estrutura completa", "copy", "inclui remoções de extras do destino"),
-            MenuOption("Voltar", "back"),
-        ],
-        console=console,
-    )
-    if base_choice == "back":
-        return MENU_BACK
-    action = SchemaAction(base_choice)
+    """Inspect a fresh copy plan, then execute only explicitly selected operations."""
+    action = SchemaAction.COPY
     origin = dict(config["profiles"][origin_tag])
     origin["alias"] = origin_tag
     destination = dict(config["profiles"][destination_tag])
