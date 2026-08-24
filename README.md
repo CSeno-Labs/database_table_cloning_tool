@@ -1,8 +1,8 @@
-# sync-db
+# sync-db 3.0.0
 
-CLI para sincronizar tabelas MySQL/MariaDB entre ambientes, com foco em instalação simples e diagnóstico claro.
+CLI para sincronizar dados e estrutura de tabelas MySQL/MariaDB entre ambientes, com foco em instalação simples, operações explícitas e diagnóstico claro.
 
-Status desta branch: reestruturação inicial para CLI instalável. A GUI antiga ainda não é foco.
+A sincronização de dados e a sincronização de estrutura são separadas: `sync-db sync` não altera colunas de uma tabela existente automaticamente. Use os comandos `sync-db schema` para revisar e aplicar mudanças de estrutura.
 
 ## Objetivo
 
@@ -26,7 +26,7 @@ No modo padrão (`auto`), ele usa o que já estiver disponível, nesta ordem:
 2. Cliente MariaDB/MySQL encontrado no sistema (`mariadb-dump`, `mariadb`, `mysqldump`, `mysql`).
 3. Engine Python usando `mysql-connector-python`.
 
-Se o usuário forçar `--mode dump`, `--mode managed-dump` ou `--mode system-dump` e nenhum cliente compatível existir, o programa erra com instruções claras.
+No modo Python, se a tabela não existir no destino ela ainda pode ser criada conforme `create_missing_tables`. Porém, se a tabela já existir, o motor Python não adiciona, altera, remove ou reordena colunas automaticamente; primeiro aplique a estrutura com `sync-db schema update` ou `sync-db schema copy`.
 
 ## Instalação em uma linha
 
@@ -92,6 +92,8 @@ Modo desenvolvimento/editável:
 .\install.ps1 -Dev
 ```
 
+Em instalação editável da branch de desenvolvimento, use `git pull` para atualizar o código. Não rode `sync-db update`: esse comando reinstala deliberadamente a versão publicada na branch `main`.
+
 ## Comandos principais
 
 Criar config padrão:
@@ -135,14 +137,80 @@ Rodar só `sync-db` abre o menu interativo com setas:
 ```text
 1 - Sincronizar tabelas
 2 - Sincronização avançada
-3 - Backup de tabelas
-4 - Bancos / conexões
-5 - Logs
-6 - Mais
-7 - Sair
+3 - Estrutura das tabelas
+4 - Backup de tabelas
+5 - Bancos / conexões
+6 - Logs
+7 - Mais
+8 - Sair
 ```
 
 Use ↑/↓ para navegar, Enter para selecionar e Esc/← para voltar.
+
+## Estrutura das tabelas
+
+Use os comandos `schema` quando quiser comparar ou alterar estrutura de forma explícita. Eles inspecionam colunas, ordem, índices, FKs, engine e collation.
+
+```bash
+# apenas diagnosticar
+sync-db schema diff -t aluno -o prod -d local
+
+# visualizar planos sem alterar nada
+sync-db schema plan update -t aluno -o prod -d local
+sync-db schema plan copy -t aluno -o prod -d local
+
+# aplicar estrutura
+sync-db schema update -t aluno -o prod -d local
+sync-db schema copy -t aluno -o prod -d local
+
+# substituir a tabela inteira por uma nova com estrutura da origem
+sync-db schema recreate-table -t aluno -o prod -d local
+```
+
+### Modos de estrutura
+
+| Comando | Efeito |
+| --- | --- |
+| `diff` | Mostra diferenças sem alterar nada. |
+| `plan update` | Mostra o que seria adicionado, alterado ou reordenado, preservando extras do destino. |
+| `update` | Aplica o plano de atualização, preservando colunas, índices e FKs exclusivos do destino. |
+| `plan copy` | Mostra como deixar o destino igual à origem, incluindo remoções. |
+| `copy` | Aplica o plano completo, incluindo remoções após confirmação. |
+| `recreate-table` | Cria uma nova tabela a partir da origem e faz uma troca atômica; pergunta se a tabela anterior deve ficar como backup datado. |
+
+No menu **Estrutura das tabelas**, existe também o modo **Escolher manualmente o que aplicar**. Ele parte do plano completo e permite marcar/desmarcar cada operação antes da revisão e confirmação.
+
+### SQL e exportação de planos
+
+```bash
+# plano normal: explicação e SQL abaixo de cada item
+sync-db schema plan update -t aluno -o prod -d local
+
+# inclui um bloco SQL FINAL, na ordem segura de execução
+sync-db schema plan update -t aluno -o prod -d local --sql
+
+# plano sem SQL abaixo dos itens
+sync-db schema plan update -t aluno -o prod -d local --no-sql
+
+# somente SQL, sem explicações
+sync-db schema plan update -t aluno -o prod -d local --sql-only
+
+# salva um .sql documentado e executável; não imprime o plano no terminal
+sync-db schema plan update -t aluno -o prod -d local --save plano_aluno.sql
+```
+
+`--save` pode ser combinado com `--sql`, `--no-sql` e `--sql-only`. O arquivo exportado contém o plano em comentários SQL e comandos ativos na forma escolhida, permitindo revisão, edição e execução manual em ferramentas como DBeaver, HeidiSQL ou MariaDB client.
+
+Nos comandos mutáveis (`copy`, `update` e `recreate-table`), o plano sempre é recalculado na hora e exibido antes da confirmação. `-y/--yes` é necessário para uso não interativo.
+
+Na recriação via CLI não interativa:
+
+```bash
+sync-db schema recreate-table -t aluno -o prod -d local --yes
+sync-db schema recreate-table -t aluno -o prod -d local --yes --keep-backup
+```
+
+O primeiro remove a tabela anterior somente após a troca atômica. O segundo preserva a anterior com nome datado.
 
 Na sincronização simples pelo menu, quando o backup é ativado ele é sempre temporário: o backup é removido automaticamente se a sincronização terminar com sucesso. Para manter backup no banco, use `--backup keep` no comando ou a opção de backup da Sincronização avançada.
 
