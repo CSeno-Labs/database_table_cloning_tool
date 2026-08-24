@@ -1,8 +1,8 @@
 import argparse
 
-from syncdb.cli import cmd_schema
+from syncdb.cli import cmd_schema, render_schema_plan_sql_file
 from syncdb.paths import AppPaths
-from syncdb.schema import SchemaSnapshot, compare_schema, inspect_schema
+from syncdb.schema import SchemaSnapshot, build_schema_plan, compare_schema, inspect_schema
 
 
 def snapshot(table, *, columns=(), indexes=(), foreign_keys=(), options=()):
@@ -200,3 +200,41 @@ def test_schema_plan_sql_flags_control_visual_and_sql_output(monkeypatch, tmp_pa
     shown = capsys.readouterr().out
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in shown
     assert "Plano de estrutura" not in shown
+
+
+def test_saved_schema_plan_is_executable_and_documents_sql_modes():
+    source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
+    target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
+    plan = build_schema_plan(compare_schema(source, target), action="update", source=source, target=target)
+
+    default = render_schema_plan_sql_file([plan], origin="prod", destination="local")
+    assert "-- Plano de estrutura: aluno (update)" in default
+    assert "--     ADICIONAR (1)" in default
+    assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in default
+
+    final = render_schema_plan_sql_file([plan], origin="prod", destination="local", include_final_sql=True)
+    assert "-- SQL: ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in final
+    assert "-- SQL FINAL" in final
+    assert final.count("ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;") == 2
+
+    no_sql = render_schema_plan_sql_file([plan], origin="prod", destination="local", show_item_sql=False)
+    assert "-- SQL FINAL" in no_sql
+    assert no_sql.count("ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;") == 1
+
+    sql_only = render_schema_plan_sql_file([plan], origin="prod", destination="local", sql_only=True)
+    assert sql_only == "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;\n"
+
+
+def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path):
+    source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
+    target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
+    config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
+    output = tmp_path / "plano.sql"
+    args = argparse.Namespace(schema_command="plan", plan_action="update", tables=["aluno"], file=None, origin="prod", destination="local", sql=False, no_sql=False, sql_only=False, save=str(output))
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
+    content = output.read_text(encoding="utf-8")
+    assert "-- Plano de estrutura: aluno (update)" in content
+    assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in content

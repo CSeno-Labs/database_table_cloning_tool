@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, build_schema_plan, compare_schema, describe_schema_action, execute_schema_plan, inspect_schema_pair, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -86,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--sql", action="store_true", help="Inclui bloco SQL FINAL após o plano")
     plan.add_argument("--no-sql", action="store_true", help="Oculta SQL abaixo de cada operação")
     plan.add_argument("--sql-only", action="store_true", help="Imprime somente o SQL do plano")
+    plan.add_argument("--save", metavar="ARQUIVO.sql", help="Salva plano documentado e executável em arquivo SQL")
     for name, help_text in (
         ("diff", "Mostra diferenças de estrutura sem alterar nada"),
         ("copy", "Copia estrutura da origem; pode alterar e remover extras"),
@@ -712,6 +713,19 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]FALHOU[/] {table}: {exc}")
                 return 1
+        save_path = getattr(args, "save", None)
+        if save_path:
+            output_path = Path(save_path).expanduser()
+            if output_path.exists():
+                console.print(f"[red]ERRO[/] Arquivo já existe: {output_path}. Escolha outro nome para não sobrescrever.")
+                return 2
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                render_schema_plan_sql_file(plans, origin=origin["alias"], destination=destination["alias"], include_final_sql=bool(getattr(args, "sql", False)), show_item_sql=not bool(getattr(args, "no_sql", False)), sql_only=sql_only),
+                encoding="utf-8",
+            )
+            if not sql_only:
+                console.print(f"[green]Plano salvo:[/] {output_path}")
         if sql_only:
             print_schema_final_sql(plans, heading=False)
         else:
@@ -797,6 +811,39 @@ def print_schema_timings(source_label: str, source_timings: tuple[tuple[str, flo
         return f"{label}: " + ", ".join(f"{name}={seconds:.2f}s" for name, seconds in timings)
 
     console.print(f"[dim]Tempos de leitura — {text(source_label, source_timings)} | {text(target_label, target_timings)}[/]")
+
+
+def render_schema_plan_sql_file(plans: list[SchemaPlan], *, origin: str, destination: str, include_final_sql: bool = False, show_item_sql: bool = True, sql_only: bool = False) -> str:
+    statements = [statement for plan in plans for statement in _execution_statements(plan)]
+    if sql_only:
+        return "\n".join(statements) + ("\n" if statements else "")
+
+    symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~", "preserve": "!"}
+    labels = {"column": "coluna", "index": "índice", "foreign_key": "FK", "table_option": "opção da tabela"}
+    sections = (("ADICIONAR", {"add"}), ("ALTERAR", {"modify", "replace"}), ("REORDENAR", {"move"}), ("REMOVER", {"drop"}), ("PRESERVAR NO DESTINO", {"preserve"}))
+    categories = (("column", "COLUNAS"), ("index", "ÍNDICES"), ("foreign_key", "CHAVES E FKs"), ("table_option", "OPÇÕES DA TABELA"))
+    lines = ["-- sync-db schema plan", f"-- Origem: {origin}", f"-- Destino: {destination}"]
+    for plan in plans:
+        lines.extend(("", f"-- Plano de estrutura: {plan.table} ({plan.action.value})"))
+        for title, actions in sections:
+            selected = [operation for operation in plan.operations if operation.action in actions]
+            if not selected:
+                continue
+            lines.append(f"--     {title} ({len(selected)})")
+            for category, category_title in categories:
+                grouped = [operation for operation in selected if operation.category == category]
+                if not grouped:
+                    continue
+                lines.append(f"--         {category_title} ({len(grouped)})")
+                for operation in grouped:
+                    lines.append(f"--             {symbols[operation.action]} {labels[operation.category]} {operation.name}")
+                    lines.extend(f"--               ┗> {detail}" for detail in operation.details)
+                    if operation.sql and show_item_sql:
+                        lines.extend(f"-- SQL: {statement}" if include_final_sql else statement for statement in _operation_statements(operation))
+    if include_final_sql or not show_item_sql:
+        lines.append("\n-- SQL FINAL")
+        lines.extend(statements)
+    return "\n".join(lines) + "\n"
 
 
 def print_schema_final_sql(plans: list[SchemaPlan], *, heading: bool = True) -> None:
