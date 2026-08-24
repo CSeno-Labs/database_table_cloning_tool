@@ -1353,13 +1353,22 @@ def format_sync_context(*, origin: str = "", destination: str = "", tables: list
     return "\n".join(lines)
 
 
+def read_tables_input(prompt: str = "Tabelas: ") -> list[str] | None:
+    value = input(prompt)
+    if value == "\x1b":
+        return None
+    return parse_tables([value])
+
+
 def interactive_backup(paths: AppPaths) -> int:
     config = load_config(paths)
     destination = choose_profile(config, "Backup de tabelas", config.get("defaults", {}).get("destination", ""), footer="Escolha o banco onde os backups serão criados")
     if destination == "back":
         return MENU_BACK
     console.print(Panel(f"Banco escolhido: {destination}\nDigite as tabelas que serão copiadas para backup.", title="Backup de tabelas", border_style="cyan"))
-    tables = parse_tables([input("Tabelas: ")])
+    tables = read_tables_input()
+    if tables is None:
+        return MENU_BACK
     if not tables:
         console.print("[red]ERRO[/] Nenhuma tabela informada.")
         return 2
@@ -1479,7 +1488,9 @@ def interactive_schema(paths: AppPaths) -> int:
             title="Estrutura das tabelas",
             border_style="cyan",
         ))
-        tables = parse_tables([input("Tabelas: ")])
+        tables = read_tables_input()
+        if tables is None:
+            return MENU_BACK
         if not tables:
             console.print("[red]ERRO[/] Nenhuma tabela informada.")
             return 2
@@ -1622,7 +1633,9 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
             if selected != "back":
                 destination = selected
         elif choice == "tables":
-            tables = parse_tables([input("Tabelas: ")])
+            selected_tables = read_tables_input()
+            if selected_tables is not None:
+                tables = selected_tables
         elif choice == "where":
             where_clause = normalize_where_clause(input("Digite a condição WHERE: "))
             if where_clause and mode != "python":
@@ -1699,7 +1712,9 @@ def interactive_sync(paths: AppPaths) -> int:
         tables = last
     else:
         console.print(Panel(format_sync_context(origin=origin, destination=destination, step="tables"), title="Sincronizando tabelas", border_style="cyan"))
-        tables = parse_tables([input("Tabelas: ")])
+        tables = read_tables_input()
+        if tables is None:
+            return MENU_BACK
     console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode="auto"), title="Resumo da sincronização", border_style="cyan"))
     backup = "none"
     console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo=auto")

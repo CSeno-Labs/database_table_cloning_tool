@@ -39,6 +39,14 @@ def test_ctrl_c_character_raises_keyboard_interrupt():
         raise AssertionError("Ctrl+C character should raise KeyboardInterrupt")
 
 
+def test_table_input_escape_returns_no_selection(monkeypatch):
+    from syncdb.cli import read_tables_input
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "\x1b")
+
+    assert read_tables_input() is None
+
+
 def test_sync_context_text_matches_step_labels():
     from syncdb.cli import format_sync_context
 
