@@ -679,7 +679,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print(f"[red]ERRO[/] {exc}")
         return 2
 
-    if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not sys.stdin.isatty():
+    if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not getattr(args, "interactive", False) and not sys.stdin.isatty():
         console.print("[red]ERRO[/] schema copy/update em modo não interativo exige -y/--yes.")
         return 2
 
@@ -753,6 +753,18 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             if getattr(args, "sql", False):
                 print_schema_final_sql(plans)
         if not getattr(args, "yes", False):
+            if getattr(args, "interactive", False):
+                choice = select_option(
+                    "Aplicar plano de estrutura?",
+                    [
+                        MenuOption("Aplicar alterações", "apply", "continua para a confirmação digitada"),
+                        MenuOption("Voltar", "back", "retorna ao menu de estrutura sem alterar nada"),
+                    ],
+                    console=console,
+                )
+                if choice != "apply":
+                    console.print("Cancelado. Nenhuma alteração foi feita.")
+                    return 0
             typed = input("Digite APLICAR para executar este plano: ").strip()
             if typed.upper() != "APLICAR":
                 console.print("Cancelado. Nenhuma alteração foi feita.")
@@ -1496,7 +1508,7 @@ def interactive_schema(paths: AppPaths) -> int:
             if choice == "diff":
                 status = cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=tables, file=None, origin=origin, destination=destination, verbose=False))
             elif choice in {"copy", "update"}:
-                status = cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False))
+                status = cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False, interactive=True))
             elif choice == "manual":
                 status = interactive_manual_schema_selection(config, origin, destination, tables)
             elif choice == "recreate-table":

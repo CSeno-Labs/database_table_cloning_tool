@@ -242,3 +242,18 @@ def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path, caps
     content = output.read_text(encoding="utf-8")
     assert "-- Plano de estrutura: aluno (update)" in content
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in content
+
+
+def test_interactive_schema_update_asks_apply_or_back_before_typed_confirmation(monkeypatch, tmp_path):
+    source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
+    target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
+    config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
+    selected_titles = []
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
+    monkeypatch.setattr("syncdb.cli.select_option", lambda title, options, **kwargs: selected_titles.append(title) or "back")
+    monkeypatch.setattr("syncdb.cli.execute_schema_plan", lambda *args: (_ for _ in ()).throw(AssertionError("não deve executar")))
+    args = argparse.Namespace(schema_command="update", tables=["aluno"], file=None, origin="prod", destination="local", yes=False, sql=False, no_sql=False, sql_only=False, interactive=True)
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
+    assert selected_titles == ["Aplicar plano de estrutura?"]
