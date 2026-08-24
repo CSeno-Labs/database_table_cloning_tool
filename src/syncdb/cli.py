@@ -19,7 +19,7 @@ from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
 from .db import test_connection
 from .engine import drop_table, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
-from .interactive import MenuOption, select_option
+from .interactive import MenuOption, read_text_or_back, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
 from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_schema_plan, inspect_schema_pair, normalize_schema_action
@@ -754,11 +754,16 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 print_schema_final_sql(plans)
         if not getattr(args, "yes", False):
             if getattr(args, "interactive", False):
-                choice = input("Aplicar plano? [a]plicar/[v]oltar: ").strip().lower()
-                if choice not in {"a", "aplicar", "apply"}:
+                choice = read_text_or_back("Aplicar plano? [a]plicar/[v]oltar: ")
+                if choice is None or choice.strip().lower() not in {"a", "aplicar", "apply"}:
                     console.print("Cancelado. Nenhuma alteração foi feita.")
                     return 0
-            typed = input("Digite APLICAR para executar este plano: ").strip()
+                typed = read_text_or_back("Digite APLICAR para executar este plano: ")
+                if typed is None:
+                    console.print("Cancelado. Nenhuma alteração foi feita.")
+                    return 0
+            else:
+                typed = input("Digite APLICAR para executar este plano: ").strip()
             if typed.upper() != "APLICAR":
                 console.print("Cancelado. Nenhuma alteração foi feita.")
                 return 1
@@ -1354,8 +1359,8 @@ def format_sync_context(*, origin: str = "", destination: str = "", tables: list
 
 
 def read_tables_input(prompt: str = "Tabelas: ") -> list[str] | None:
-    value = input(prompt)
-    if value == "\x1b":
+    value = read_text_or_back(prompt)
+    if value is None:
         return None
     return parse_tables([value])
 

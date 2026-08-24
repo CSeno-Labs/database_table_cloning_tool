@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from io import UnsupportedOperation
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -31,6 +32,39 @@ def menu_option_window(index: int, option_count: int, max_visible_options: int =
     cursor = max(0, min(index, option_count - 1))
     start = max(0, min(cursor - visible // 2, option_count - visible))
     return start, start + visible
+
+
+def read_text_or_back(prompt: str, *, key_reader: KeyReader | None = None) -> str | None:
+    """Read editable text in a TTY, returning None immediately for Esc."""
+    supplied_reader = key_reader is not None
+    key_reader = key_reader or read_key
+    if not sys.stdin.isatty():
+        value = input(prompt)
+        return None if value == "\x1b" else value
+    if not supplied_reader:
+        try:
+            sys.stdin.fileno()
+        except (OSError, UnsupportedOperation):
+            value = input(prompt)
+            return None if value == "\x1b" else value
+    print(prompt, end="", flush=True)
+    characters: list[str] = []
+    while True:
+        key = key_reader()
+        if key in {"escape", "left"}:
+            print()
+            return None
+        if key == "enter":
+            print()
+            return "".join(characters)
+        if key == "backspace":
+            if characters:
+                characters.pop()
+                print("\b \b", end="", flush=True)
+            continue
+        if len(key) == 1 and key >= " ":
+            characters.append(key)
+            print(key, end="", flush=True)
 
 
 def apply_menu_key(index: int, key: str, options: list[MenuOption]) -> tuple[int, Any | None]:

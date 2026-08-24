@@ -1,4 +1,4 @@
-from syncdb.interactive import MenuOption, apply_menu_key, menu_option_window, print_menu, select_option
+from syncdb.interactive import MenuOption, apply_menu_key, menu_option_window, print_menu, read_text_or_back, select_option
 
 
 def test_menu_option_window_keeps_cursor_visible_in_long_list():
@@ -51,6 +51,12 @@ def test_table_input_escape_returns_no_selection(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt="": "\x1b")
 
     assert read_tables_input() is None
+
+
+def test_read_text_or_back_returns_none_immediately_on_escape(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: "escape") is None
 
 
 def test_sync_context_text_matches_step_labels():
