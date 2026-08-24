@@ -1504,10 +1504,11 @@ def interactive_schema(paths: AppPaths) -> int:
                     MenuOption("Atualizar preservando extras", "update", "copia a estrutura da origem, mas não remove extras do destino"),
                     MenuOption("Escolher manualmente o que aplicar", "manual", "modo interativo: escolha colunas, índices e chaves após ver o diff"),
                     MenuOption("Recriar tabela a partir da origem", "recreate-table", "backup opcional"),
-                    MenuOption("Escolher tabelas novamente", "reselect_tables", "mantém os bancos escolhidos"),
                     MenuOption("Voltar ao menu principal", "main_menu"),
                 ],
                 console=console,
+                footer="Pressione T para escolher as tabelas novamente",
+                hotkeys={"t": "reselect_tables"},
             )
             if choice in {"back", "reselect_tables"}:
                 break

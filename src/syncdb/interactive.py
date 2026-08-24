@@ -156,8 +156,10 @@ def select_option(
     console: Console | None = None,
     key_reader: KeyReader = read_key,
     footer: str = "",
+    hotkeys: dict[str, Any] | None = None,
 ) -> Any:
     console = console or Console()
+    hotkeys = {key.lower(): value for key, value in (hotkeys or {}).items()}
     option_list = list(options)
     if not option_list:
         return None
@@ -171,6 +173,8 @@ def select_option(
             console.print(f"\n[dim]{footer}[/]")
         console.print("[0] Voltar")
         value = input("Escolha: ").strip()
+        if value.lower() in hotkeys:
+            return hotkeys[value.lower()]
         if not value:
             return option_list[default_index].value
         _, selected = apply_menu_key(default_index, value, option_list)
@@ -181,6 +185,8 @@ def select_option(
         while True:
             print_menu(console, title, option_list, index, footer)
             key = key_reader()
+            if key.lower() in hotkeys:
+                return hotkeys[key.lower()]
             index, selected = apply_menu_key(index, key, option_list)
             if selected is not None:
                 return selected
@@ -194,6 +200,8 @@ def select_option(
     ) as live:
         while True:
             key = key_reader()
+            if key.lower() in hotkeys:
+                return hotkeys[key.lower()]
             index, selected = apply_menu_key(index, key, option_list)
             if selected is not None:
                 return selected

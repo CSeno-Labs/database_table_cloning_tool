@@ -208,6 +208,7 @@ def test_interactive_schema_reselects_only_tables_without_rechoosing_profiles(mo
     selections = iter(("reselect_tables", "main_menu"))
     prompts = []
     menu_labels = []
+    footers = []
 
     monkeypatch.setattr(cli, "load_config", lambda paths: {
         "profiles": {"prod": {}, "local": {}},
@@ -221,6 +222,7 @@ def test_interactive_schema_reselects_only_tables_without_rechoosing_profiles(mo
 
     def select(title, options, **kwargs):
         menu_labels.extend(option.label for option in options)
+        footers.append(kwargs.get("footer", ""))
         return next(selections)
 
     monkeypatch.setattr("builtins.input", input_value)
@@ -229,7 +231,8 @@ def test_interactive_schema_reselects_only_tables_without_rechoosing_profiles(mo
     assert cli.interactive_schema(paths) == -1000
     assert len(profile_choices) == 2
     assert prompts == ["Tabelas: ", "Tabelas: "]
-    assert "Escolher tabelas novamente" in menu_labels
+    assert "Escolher tabelas novamente" not in menu_labels
+    assert footers == ["Pressione T para escolher as tabelas novamente", "Pressione T para escolher as tabelas novamente"]
 
 
 def test_interactive_schema_back_opens_table_selection(monkeypatch, tmp_path):

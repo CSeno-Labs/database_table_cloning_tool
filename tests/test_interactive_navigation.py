@@ -7,6 +7,12 @@ def test_menu_option_window_keeps_cursor_visible_in_long_list():
     assert menu_option_window(19, 20, 6) == (14, 20)
 
 
+def test_select_option_accepts_custom_hotkey(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    assert select_option("Menu", [MenuOption("A", "a")], key_reader=lambda: "t", hotkeys={"t": "tables"}) == "tables"
+
+
 def test_apply_menu_key_wraps_with_arrows():
     options = [MenuOption("A", "a"), MenuOption("B", "b"), MenuOption("C", "c")]
 
