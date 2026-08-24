@@ -40,6 +40,7 @@ def app_paths(tmp_path):
 def test_interactive_schema_offers_manual_selection_without_cli_action(monkeypatch, tmp_path):
     paths = app_paths(tmp_path)
     menu_labels = []
+    menu_descriptions = []
 
     monkeypatch.setattr("syncdb.cli.load_config", lambda paths: {
         "profiles": {
@@ -54,12 +55,14 @@ def test_interactive_schema_offers_manual_selection_without_cli_action(monkeypat
     def fake_select(title, options, **kwargs):
         if title == "Estrutura das tabelas":
             menu_labels.extend(option.label for option in options)
+            menu_descriptions.extend(option.description for option in options)
         return "main_menu"
 
     monkeypatch.setattr("syncdb.cli.select_option", fake_select)
 
     assert interactive_schema(paths) == -1000
     assert "Escolher manualmente o que aplicar" in menu_labels
+    assert all("sem alias no CLI" not in description for description in menu_descriptions)
 
 
 def test_interactive_manual_selects_only_one_operation_and_executes_it(monkeypatch, tmp_path):
