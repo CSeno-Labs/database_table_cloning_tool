@@ -421,31 +421,31 @@ def cmd_doctor(paths: AppPaths) -> int:
 
     managed = find_managed_client(paths, config["client"].get("vendor", "mariadb"))
     system = find_system_client(config["client"].get("vendor", "mariadb"))
-    clients_table = Table(title="Clientes / motores")
-    clients_table.add_column("Item")
+    clients_table = Table(title=t("doctor.clients.title"))
+    clients_table.add_column(t("status.item"))
     clients_table.add_column("Status")
-    clients_table.add_column("Detalhes")
-    clients_table.add_row("Cliente gerenciado", "OK" if managed else "WARN", managed.describe() if managed else "não instalado — rode: sync-db client install")
-    clients_table.add_row("Cliente do sistema", "OK" if system else "WARN", system.describe() if system else "não encontrado no PATH")
-    clients_table.add_row("Engine Python", "OK", "disponível")
+    clients_table.add_column(t("status.details"))
+    clients_table.add_row(t("status.managed_client"), "OK" if managed else "WARN", managed.describe() if managed else t("status.install_command"))
+    clients_table.add_row(t("status.system_client"), "OK" if system else "WARN", system.describe() if system else t("status.not_found_path"))
+    clients_table.add_row(t("status.python_engine"), "OK", t("status.available"))
     resolved = resolve_client(paths, config["client"].get("mode", "auto"), config["client"].get("preferred_source", "managed"), config["client"].get("vendor", "mariadb"))
-    clients_table.add_row("Motor recomendado", resolved.kind, resolved.reason)
+    clients_table.add_row(t("status.recommended_engine"), resolved.kind, resolved.reason)
     console.print(clients_table)
 
     failed = False
     profiles = config.get("profiles", {})
-    conn_table = Table(title="Conexões")
+    conn_table = Table(title=t("doctor.connections.title"))
     conn_table.add_column("Tag")
-    conn_table.add_column("Nome")
+    conn_table.add_column(t("doctor.name"))
     conn_table.add_column("Host")
     conn_table.add_column("Database")
     conn_table.add_column("Status")
-    conn_table.add_column("Versão / mensagem")
+    conn_table.add_column(t("doctor.version_message"))
     if not profiles:
-        console.print("[yellow]WARN[/] Nenhum banco cadastrado. Rode: sync-db db add")
+        console.print(f"[yellow]WARN[/] {t('doctor.no_databases')}")
     for tag, db_cfg in profiles.items():
         if not db_cfg.get("host") or not db_cfg.get("database") or not db_cfg.get("user"):
-            conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), "WARN", "host/user/database ainda não configurados")
+            conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), "WARN", t("status.incomplete_connection"))
             continue
         ok, msg = test_connection(db_cfg)
         conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), "OK" if ok else "ERRO", msg)
@@ -554,7 +554,7 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     results = []
     progress_cm = sync_progress(len(tables)) if sys.stdin.isatty() else nullcontext(None)
     with progress_cm as progress:
-        task_id = progress.add_task("Sincronizando tabelas", total=len(tables)) if progress else None
+        task_id = progress.add_task(t("menu.sync.title"), total=len(tables)) if progress else None
         for table in tables:
             console.print(f"\n[bold cyan]Sincronizando {table}[/]")
             if progress and task_id is not None:
@@ -665,7 +665,7 @@ def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], 
     results = []
     progress_cm = sync_progress(len(tables)) if sys.stdin.isatty() else nullcontext(None)
     with progress_cm as progress:
-        task_id = progress.add_task("Sincronizando tabelas", total=len(tables)) if progress else None
+        task_id = progress.add_task(t("menu.sync.title"), total=len(tables)) if progress else None
         for table in tables:
             console.print(f"\n[bold cyan]Sincronizando {table}[/]")
             if progress and task_id is not None:
@@ -1205,14 +1205,14 @@ def cmd_client(paths: AppPaths, args: argparse.Namespace) -> int:
     if sub == "status":
         managed = find_managed_client(paths)
         system = find_system_client()
-        table = Table(title="Cliente MariaDB / MySQL")
-        table.add_column("Item")
+        table = Table(title=t("client.title"))
+        table.add_column(t("status.item"))
         table.add_column("Status")
-        table.add_column("Detalhes")
-        table.add_row("Pasta gerenciada", "OK", str(paths.managed_client_dir))
-        table.add_row("Cliente gerenciado", "OK" if managed else "WARN", managed.describe() if managed else "não instalado")
-        table.add_row("Cliente do sistema", "OK" if system else "WARN", system.describe() if system else "não encontrado")
-        table.add_row("Engine Python", "OK", "disponível")
+        table.add_column(t("status.details"))
+        table.add_row(t("client.managed_folder"), "OK", str(paths.managed_client_dir))
+        table.add_row(t("status.managed_client"), "OK" if managed else "WARN", managed.describe() if managed else t("status.not_installed"))
+        table.add_row(t("status.system_client"), "OK" if system else "WARN", system.describe() if system else t("status.not_found"))
+        table.add_row(t("status.python_engine"), "OK", t("status.available"))
         console.print(table)
     elif sub == "path":
         console.print(str(paths.managed_client_dir))
@@ -1473,21 +1473,21 @@ def read_tables_input(prompt: str | None = None) -> list[str] | None:
 
 def interactive_backup(paths: AppPaths) -> int:
     config = load_config(paths)
-    destination = choose_profile(config, "Backup de tabelas", config.get("defaults", {}).get("destination", ""), footer="Escolha o banco onde os backups serão criados")
+    destination = choose_profile(config, t("menu.backup.title"), config.get("defaults", {}).get("destination", ""), footer=t("menu.backup.choose_destination"))
     if destination == "back":
         return MENU_BACK
-    console.print(Panel(f"Banco escolhido: {destination}\nDigite as tabelas que serão copiadas para backup.", title="Backup de tabelas", border_style="cyan"))
+    console.print(Panel(t("menu.backup.context", destination=destination), title=t("menu.backup.title"), border_style="cyan"))
     tables = read_tables_input()
     if tables is None:
         return MENU_BACK
     if not tables:
         console.print(f"[red]{t('error')}[/] {t('menu.no_table')}")
         return 2
-    console.print("Nomes sugeridos dos backups. Pressione Enter para confirmar ou edite o nome.")
+    console.print(t("menu.backup.names"))
     suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
     selected_names = []
     for table in tables:
-        selected_names.append(ask(f"Backup para {table}", suggested_backup_name(table, suffix)))
+        selected_names.append(ask(t("menu.backup.name", table=table), suggested_backup_name(table, suffix)))
     args = argparse.Namespace(tables=tables, file=None, destination=destination, yes=True)
     original = suggested_backup_name
     names_iter = iter(selected_names)
@@ -1645,16 +1645,16 @@ def interactive_schema(paths: AppPaths) -> int:
 def profile_summary(config: dict, tag: str) -> str:
     profile = config.get("profiles", {}).get(tag, {})
     if not tag:
-        return "não escolhido"
+        return t("advanced.not_selected")
     return f"{tag} ({profile.get('host', '')}/{profile.get('database', '')})"
 
 
 def advanced_rows_text(insert_missing: bool, where_clause: str = "") -> str:
     if insert_missing:
-        return "apenas novas da origem - mantém linhas existentes no destino e insere só PKs faltantes"
+        return t("advanced.rows.missing")
     if where_clause:
-        return "TODAS - substitui as linhas encontradas pelo WHERE"
-    return "TODAS - substitui a tabela inteira"
+        return t("advanced.rows.where")
+    return t("advanced.rows.all")
 
 
 def advanced_backup_text(backup_mode: str) -> str:
@@ -1667,54 +1667,54 @@ def advanced_backup_text(backup_mode: str) -> str:
 
 def advanced_backup_options() -> list[MenuOption]:
     return [
-        MenuOption("não", "none", "não cria backup antes de sincronizar"),
-        MenuOption("sim, temporário", "temp", "remove o backup se a sincronização concluir com sucesso"),
-        MenuOption("sim, manter", "keep", "mantém o backup no banco após sincronizar com sucesso"),
+        MenuOption(t("advanced.none"), "none", t("advanced.backup.none")),
+        MenuOption(t("advanced.backup.temp"), "temp", t("advanced.backup.temp_description")),
+        MenuOption(t("advanced.backup.keep"), "keep", t("advanced.backup.keep_description")),
         MenuOption(t("menu.back"), "back"),
     ]
 
 
 def advanced_mode_options(where_clause: str, insert_missing: bool) -> list[MenuOption]:
     if where_clause or insert_missing:
-        return [MenuOption("python", "python", "obrigatório para WHERE/insert-missing nesta versão"), MenuOption(t("menu.back"), "back")]
+        return [MenuOption("python", "python", t("advanced.mode.required")), MenuOption(t("menu.back"), "back")]
     return [
-        MenuOption("auto", "auto", "recomendado"),
-        MenuOption("managed-dump", "managed-dump", "MariaDB gerenciado"),
-        MenuOption("system-dump", "system-dump", "cliente do sistema"),
-        MenuOption("python", "python", "fallback sem dump"),
+        MenuOption("auto", "auto", t("advanced.mode.recommended")),
+        MenuOption("managed-dump", "managed-dump", t("advanced.mode.managed")),
+        MenuOption("system-dump", "system-dump", t("advanced.mode.system")),
+        MenuOption("python", "python", t("advanced.mode.python")),
         MenuOption(t("menu.back"), "back"),
     ]
 
 
 def advanced_menu_options(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str, backup_mode: str = "none") -> list[MenuOption]:
-    where_text = f"WHERE {where_clause}" if where_clause else "não"
+    where_text = f"WHERE {where_clause}" if where_clause else t("advanced.none")
     return [
-        MenuOption("Banco de origem", "origin", profile_summary(config, origin)),
-        MenuOption("Banco de destino", "destination", profile_summary(config, destination)),
-        MenuOption("Escolher tabelas", "tables", ", ".join(tables) if tables else "não escolhido"),
-        MenuOption("Adicionar condicional (WHERE)", "where", where_text),
-        MenuOption("Quais linhas adicionar", "rows", advanced_rows_text(insert_missing, where_clause)),
-        MenuOption("Motor de sincronização", "mode", mode),
-        MenuOption("Executar sincronização avançada", "run"),
+        MenuOption(t("advanced.source"), "origin", profile_summary(config, origin)),
+        MenuOption(t("advanced.destination"), "destination", profile_summary(config, destination)),
+        MenuOption(t("advanced.tables"), "tables", ", ".join(tables) if tables else t("advanced.not_selected")),
+        MenuOption(t("advanced.where"), "where", where_text),
+        MenuOption(t("advanced.rows"), "rows", advanced_rows_text(insert_missing, where_clause)),
+        MenuOption(t("advanced.engine"), "mode", mode),
+        MenuOption(t("advanced.run"), "run"),
         MenuOption(t("menu.back"), "back"),
     ]
 
 
 def format_advanced_sync_state(config: dict, origin: str, destination: str, tables: list[str], where_clause: str, insert_missing: bool, mode: str, backup_mode: str = "none") -> str:
-    where_text = f"WHERE {where_clause}" if where_clause else "não"
+    where_text = f"WHERE {where_clause}" if where_clause else t("advanced.none")
     rows_text = advanced_rows_text(insert_missing, where_clause)
     return "\n".join([
-        "Banco de origem",
+        t("advanced.source"),
         f"    ┗> {profile_summary(config, origin)}",
-        "Banco de destino",
+        t("advanced.destination"),
         f"    ┗> {profile_summary(config, destination)}",
-        "Escolher tabelas",
-        f"    ┗> {', '.join(tables) if tables else 'não escolhido'}",
-        "Adicionar condicional (WHERE)",
+        t("advanced.tables"),
+        f"    ┗> {', '.join(tables) if tables else t('advanced.not_selected')}",
+        t("advanced.where"),
         f"    ┗> {where_text}",
-        "Quais linhas adicionar",
+        t("advanced.rows"),
         f"    ┗> {rows_text}",
-        "Motor de sincronização",
+        t("advanced.engine"),
         f"    ┗> {mode}",
     ])
 
@@ -1730,18 +1730,18 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
     backup_mode = "none"
     while True:
         choice = select_option(
-            "Sincronização avançada",
+            t("advanced.title"),
             advanced_menu_options(config, origin, destination, tables, where_clause, insert_missing, mode, backup_mode),
             console=console,
         )
         if choice == "back":
             return MENU_BACK
         if choice == "origin":
-            selected = choose_profile(config, "Sincronização avançada — origem", origin)
+            selected = choose_profile(config, t("advanced.origin.title"), origin)
             if selected != "back":
                 origin = selected
         elif choice == "destination":
-            selected = choose_profile(config, "Sincronização avançada — destino", destination)
+            selected = choose_profile(config, t("advanced.destination.title"), destination)
             if selected != "back":
                 destination = selected
         elif choice == "tables":
@@ -1749,15 +1749,15 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
             if selected_tables is not None:
                 tables = selected_tables
         elif choice == "where":
-            where_clause = normalize_where_clause(input("Digite a condição WHERE: "))
+            where_clause = normalize_where_clause(input(t("advanced.where.prompt")))
             if where_clause and mode != "python":
                 mode = "python"
         elif choice == "rows":
             row_choice = select_option(
-                "Quais linhas adicionar",
+                t("advanced.rows"),
                 [
-                    MenuOption("TODAS", "all", "substitui a tabela inteira ou as linhas encontradas pelo WHERE"),
-                    MenuOption("apenas novas da origem", "missing", "mantém existentes e insere só PKs faltantes"),
+                    MenuOption(t("advanced.rows.all_label"), "all", t("advanced.rows.all_description")),
+                    MenuOption(t("advanced.rows.missing_label"), "missing", t("advanced.rows.missing_description")),
                     MenuOption(t("menu.back"), "back"),
                 ],
                 console=console,
@@ -1768,7 +1768,7 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                     mode = "python"
         elif choice == "mode":
             mode_choice = select_option(
-                "Motor de sincronização",
+                t("advanced.engine"),
                 advanced_mode_options(where_clause, insert_missing),
                 console=console,
             )
@@ -1776,12 +1776,12 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 mode = mode_choice
         elif choice == "run":
             if not origin or not destination or not tables:
-                console.print("[red]ERRO[/] escolha origem, destino e tabelas antes de executar.")
+                console.print(f"[red]{t('error')}[/] {t('advanced.run.missing')}")
                 pause_after_action()
                 continue
-            console.print("\n[bold]Resumo da sincronização avançada[/]")
+            console.print(f"\n[bold]{t('advanced.run.summary')}[/]")
             console.print(format_advanced_sync_state(config, origin, destination, tables, where_clause, insert_missing, mode, backup_mode))
-            if not confirm("Continuar?"):
+            if not confirm(t("prompt.confirm")):
                 return 1
             effective_mode = "python" if where_clause or insert_missing else mode
             return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode=effective_mode, backup=backup_mode, where=where_clause, insert_missing=insert_missing, yes=True, dry_run=False))
@@ -1791,7 +1791,7 @@ def interactive_sync(paths: AppPaths) -> int:
     config = load_config(paths)
     origin = choose_profile(
         config,
-        "Sincronizando tabelas",
+        t("menu.sync.title"),
         config.get("defaults", {}).get("origin", ""),
         footer=format_sync_context(step="origin"),
     )
@@ -1799,7 +1799,7 @@ def interactive_sync(paths: AppPaths) -> int:
         return MENU_BACK
     destination = choose_profile(
         config,
-        "Sincronizando tabelas",
+        t("menu.sync.title"),
         config.get("defaults", {}).get("destination", ""),
         footer=format_sync_context(origin=origin, step="destination"),
     )
@@ -1809,7 +1809,7 @@ def interactive_sync(paths: AppPaths) -> int:
     table_source = "manual"
     if last:
         table_source = select_option(
-            "Sincronizando tabelas",
+            t("menu.sync.title"),
             [
                 MenuOption(t("menu.use_last", tables=", ".join(last)), "last"),
                 MenuOption(t("menu.enter_tables"), "manual"),
@@ -1823,14 +1823,14 @@ def interactive_sync(paths: AppPaths) -> int:
     if table_source == "last":
         tables = last
     else:
-        console.print(Panel(format_sync_context(origin=origin, destination=destination, step="tables"), title="Sincronizando tabelas", border_style="cyan"))
+        console.print(Panel(format_sync_context(origin=origin, destination=destination, step="tables"), title=t("menu.sync.title"), border_style="cyan"))
         tables = read_tables_input()
         if tables is None:
             return MENU_BACK
-    console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode="auto"), title="Resumo da sincronização", border_style="cyan"))
+    console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode="auto"), title=t("menu.sync.summary"), border_style="cyan"))
     backup = "none"
-    console.print(f"Confirmar: {origin} → {destination} | {', '.join(tables)} | modo=auto")
-    if not confirm("Continuar?"):
+    console.print(f"{t('prompt.confirm')}: {origin} → {destination} | {', '.join(tables)} | mode=auto")
+    if not confirm(t("prompt.confirm")):
         return 1
     return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode="auto", backup=backup, where=None, insert_missing=False, yes=False))
 
@@ -1838,13 +1838,13 @@ def interactive_sync(paths: AppPaths) -> int:
 def interactive_db(paths: AppPaths) -> int:
     while True:
         choice = select_option(
-            "Bancos / conexões",
+            t("menu.databases"),
             [
-                MenuOption("Listar bancos", "list"),
-                MenuOption("Adicionar banco", "add"),
-                MenuOption("Editar banco", "edit"),
-                MenuOption("Testar banco", "test"),
-                MenuOption("Remover banco", "remove"),
+                MenuOption(t("db.list"), "list"),
+                MenuOption(t("db.add"), "add"),
+                MenuOption(t("db.edit_action"), "edit"),
+                MenuOption(t("db.test_action"), "test"),
+                MenuOption(t("db.remove_action"), "remove"),
                 MenuOption(t("menu.back"), "back"),
             ],
             console=console,
@@ -1857,15 +1857,15 @@ def interactive_db(paths: AppPaths) -> int:
             status = cmd_db(paths, argparse.Namespace(db_command="add", tag=None))
         elif choice == "edit":
             config = load_config(paths)
-            tag = choose_profile(config, "Banco para editar", config.get("defaults", {}).get("destination", ""))
+            tag = choose_profile(config, t("db.edit"), config.get("defaults", {}).get("destination", ""))
             status = 0 if tag == "back" else cmd_db(paths, argparse.Namespace(db_command="edit", tag=tag))
         elif choice == "test":
             config = load_config(paths)
-            tag = choose_profile(config, "Banco para testar", config.get("defaults", {}).get("origin", ""))
+            tag = choose_profile(config, t("db.test"), config.get("defaults", {}).get("origin", ""))
             status = 0 if tag == "back" else cmd_db(paths, argparse.Namespace(db_command="test", tag=tag))
         elif choice == "remove":
             config = load_config(paths)
-            tag = choose_profile(config, "Banco para remover", "")
+            tag = choose_profile(config, t("db.remove"), "")
             status = 0 if tag == "back" else cmd_db(paths, argparse.Namespace(db_command="remove", tag=tag))
         else:
             status = 0
@@ -1886,11 +1886,11 @@ def interactive_defaults(paths: AppPaths) -> int:
 def interactive_client(paths: AppPaths) -> int:
     while True:
         choice = select_option(
-            "Cliente MariaDB gerenciado",
+            t("menu.client"),
             [
-                MenuOption("Status", "status"),
-                MenuOption("Instalar/atualizar MariaDB", "install"),
-                MenuOption("Remover MariaDB", "remove"),
+                MenuOption(t("client.status"), "status"),
+                MenuOption(t("client.install"), "install"),
+                MenuOption(t("client.remove"), "remove"),
                 MenuOption(t("menu.back"), "back"),
             ],
             console=console,
@@ -1908,12 +1908,12 @@ def interactive_client(paths: AppPaths) -> int:
 
 def interactive_logs(paths: AppPaths) -> int:
     choice = select_option(
-        "Logs",
+        t("menu.logs"),
         [
-            MenuOption("Mostrar caminho", "path"),
-            MenuOption("Ver últimas linhas", "tail"),
-            MenuOption("Abrir pasta", "open"),
-            MenuOption("Limpar logs", "clear"),
+            MenuOption(t("logs.path"), "path"),
+            MenuOption(t("logs.tail"), "tail"),
+            MenuOption(t("logs.open"), "open"),
+            MenuOption(t("logs.clear"), "clear"),
             MenuOption(t("menu.back"), "back"),
         ],
         console=console,
@@ -1926,7 +1926,7 @@ def interactive_logs(paths: AppPaths) -> int:
 
 
 def confirm(question: str) -> bool:
-    answer = input(f"{question} [s/N] ").strip().lower()
+    answer = input(f"{question} [{t('prompt.yes_no')}] ").strip().lower()
     return answer in {"s", "sim", "y", "yes"}
 
 

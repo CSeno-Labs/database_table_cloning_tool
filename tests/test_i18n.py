@@ -1,4 +1,5 @@
 import json
+from argparse import Namespace
 
 import pytest
 
@@ -6,7 +7,13 @@ from rich.console import Console
 
 from syncdb.cli import (
     _manual_schema_operation_options,
+    advanced_backup_options,
     advanced_menu_options,
+    advanced_mode_options,
+    advanced_rows_text,
+    cmd_client,
+    cmd_doctor,
+    confirm,
     format_sync_context,
     main,
     print_schema_plan,
@@ -117,4 +124,82 @@ def test_english_schema_plan_labels_preserve_sql_identifiers(capsys):
     assert "ADD (1)" in output
     assert "column NomeOriginal" in output
     assert "ALTER TABLE `AlunoEspecial` ADD COLUMN `NomeOriginal`" in output
+    set_language("pt-BR")
+
+
+def test_english_advanced_menu_and_confirmation_are_fully_translated(monkeypatch):
+    set_language("en")
+    labels = [option.label for option in advanced_menu_options({}, "", "", [], "", False, "auto")]
+    descriptions = [option.description for option in advanced_backup_options() + advanced_mode_options("", False)]
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or "y")
+
+    assert labels == [
+        "Source database",
+        "Destination database",
+        "Choose tables",
+        "Add condition (WHERE)",
+        "Which rows to add",
+        "Synchronization engine",
+        "Run advanced synchronization",
+        "Back",
+    ]
+    assert advanced_rows_text(False) == "ALL — replaces the entire table"
+    assert confirm("Continue?") is True
+    assert prompts == ["Continue? [y/N] "]
+    assert not any("não" in text or "recomendado" in text or "cliente do sistema" in text for text in descriptions)
+    set_language("pt-BR")
+
+
+def test_english_client_and_doctor_status_tables_have_no_portuguese(monkeypatch, tmp_path, capsys):
+    set_language("en")
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    paths.config_file.write_text(json.dumps({"language": "en", "profiles": {}, "client": {"vendor": "mariadb", "mode": "auto", "preferred_source": "managed"}}), encoding="utf-8")
+    monkeypatch.setattr("syncdb.cli.find_managed_client", lambda *args: None)
+    monkeypatch.setattr("syncdb.cli.find_system_client", lambda *args: None)
+
+    assert cmd_client(paths, Namespace(client_command="status")) == 0
+    assert cmd_doctor(paths) == 0
+
+    output = capsys.readouterr().out
+    for portuguese in ("Cliente MariaDB", "Pasta gerenciada", "Detalhes", "Conexões", "Versão / mensagem", "Nenhum cliente dump", "ainda não configurados"):
+        assert portuguese not in output
+    set_language("pt-BR")
+
+
+def test_english_interactive_sync_backup_db_logs_and_client_use_english_labels(monkeypatch, tmp_path, capsys):
+    from syncdb import cli
+
+    set_language("en")
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    config = {"language": "en", "profiles": {"source": {}, "target": {}}, "defaults": {"origin": "source", "destination": "target"}}
+    monkeypatch.setattr(cli, "load_config", lambda _paths: config)
+    monkeypatch.setattr(cli, "read_last_tables", lambda *_args: [])
+    choices = iter(["source", "target"])
+    monkeypatch.setattr(cli, "choose_profile", lambda *_args, **_kwargs: next(choices))
+    monkeypatch.setattr(cli, "read_tables_input", lambda: ["orders"])
+    monkeypatch.setattr(cli, "confirm", lambda question: question == "Continue?")
+    monkeypatch.setattr(cli, "cmd_sync", lambda *_args, **_kwargs: 0)
+
+    assert cli.interactive_sync(paths) == 0
+    output = capsys.readouterr().out
+    assert "Synchronization summary" in output
+    assert "Summary of synchronization" not in output
+    assert "Resumo da sincronização" not in output
+
+    seen = []
+    monkeypatch.setattr(cli, "select_option", lambda title, options, **_kwargs: seen.append((title, [option.label for option in options])) or "back")
+    monkeypatch.setattr(cli, "choose_profile", lambda _config, title, *_args, **kwargs: seen.append((title, kwargs.get("footer", ""))) or "back")
+    assert cli.interactive_backup(paths) == cli.MENU_BACK
+    assert cli.interactive_db(paths) == 0
+    assert cli.interactive_logs(paths) == 0
+    assert cli.interactive_client(paths) == 0
+
+    rendered = "\n".join(str(item) for item in seen)
+    for portuguese in ("Backup de tabelas", "Bancos / conexões", "Listar bancos", "Mostrar caminho", "Instalar/atualizar MariaDB"):
+        assert portuguese not in rendered
+    for english in ("Table backup", "Databases / connections", "List databases", "Show path", "Install/update MariaDB"):
+        assert english in rendered
     set_language("pt-BR")
