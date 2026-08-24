@@ -1463,35 +1463,51 @@ def interactive_schema(paths: AppPaths) -> int:
     destination = choose_profile(config, "Estrutura das tabelas — banco que será alterado", config.get("defaults", {}).get("destination", ""))
     if destination == "back":
         return MENU_BACK
-    console.print(Panel(f"Modelo: {origin}\nBanco que será alterado: {destination}\nDigite as tabelas para analisar.", title="Estrutura das tabelas", border_style="cyan"))
-    tables = parse_tables([input("Tabelas: ")])
-    if not tables:
-        console.print("[red]ERRO[/] Nenhuma tabela informada.")
-        return 2
-    choice = select_option(
-        "Estrutura das tabelas",
-        [
-            MenuOption("Ver diferenças", "diff"),
-            MenuOption("Copiar estrutura", "copy", "deixa o destino igual à origem; pode alterar e remover extras"),
-            MenuOption("Atualizar preservando extras", "update", "copia a estrutura da origem, mas não remove extras do destino"),
-            MenuOption("Escolher manualmente o que aplicar", "manual", "modo interativo: escolha colunas, índices e chaves após ver o diff"),
-            MenuOption("Recriar tabela a partir da origem", "recreate-table", "backup opcional; sem alias no CLI"),
-            MenuOption("Voltar", "back"),
-        ],
-        console=console,
-    )
-    if choice == "back":
-        return MENU_BACK
-    if choice == "diff":
-        return cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=tables, file=None, origin=origin, destination=destination, verbose=False))
-    if choice in {"copy", "update"}:
-        return cmd_schema(paths, argparse.Namespace(schema_command="plan", plan_action=choice, tables=tables, file=None, origin=origin, destination=destination))
-    if choice == "manual":
-        return interactive_manual_schema_selection(config, origin, destination, tables)
-    if choice == "recreate-table":
-        console.print("[yellow]ATENÇÃO:[/] este modo recria a tabela no destino. Backup é opcional e deve ser feito separadamente se desejado.")
-        return cmd_schema(paths, argparse.Namespace(schema_command="recreate-table", tables=tables, file=None, origin=origin, destination=destination, yes=False))
-    return MENU_BACK
+
+    while True:
+        console.print(Panel(
+            f"Modelo: {origin}\nBanco que será alterado: {destination}\nDigite as tabelas para analisar.",
+            title="Estrutura das tabelas",
+            border_style="cyan",
+        ))
+        tables = parse_tables([input("Tabelas: ")])
+        if not tables:
+            console.print("[red]ERRO[/] Nenhuma tabela informada.")
+            return 2
+
+        while True:
+            choice = select_option(
+                "Estrutura das tabelas",
+                [
+                    MenuOption("Ver diferenças", "diff"),
+                    MenuOption("Copiar estrutura", "copy", "deixa o destino igual à origem; pode alterar e remover extras"),
+                    MenuOption("Atualizar preservando extras", "update", "copia a estrutura da origem, mas não remove extras do destino"),
+                    MenuOption("Escolher manualmente o que aplicar", "manual", "modo interativo: escolha colunas, índices e chaves após ver o diff"),
+                    MenuOption("Recriar tabela a partir da origem", "recreate-table", "backup opcional; sem alias no CLI"),
+                    MenuOption("Escolher tabelas novamente", "reselect_tables", "mantém os bancos escolhidos"),
+                    MenuOption("Voltar ao menu principal", "main_menu"),
+                ],
+                console=console,
+            )
+            if choice in {"back", "reselect_tables"}:
+                break
+            if choice == "main_menu":
+                return MENU_BACK
+            if choice == "diff":
+                status = cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=tables, file=None, origin=origin, destination=destination, verbose=False))
+            elif choice in {"copy", "update"}:
+                status = cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False))
+            elif choice == "manual":
+                status = interactive_manual_schema_selection(config, origin, destination, tables)
+            elif choice == "recreate-table":
+                console.print("[yellow]ATENÇÃO:[/] este modo recria a tabela no destino. Backup é opcional e deve ser feito separadamente se desejado.")
+                status = cmd_schema(paths, argparse.Namespace(schema_command="recreate-table", tables=tables, file=None, origin=origin, destination=destination, yes=False))
+            else:
+                continue
+
+            if not sys.stdin.isatty():
+                return status
+            pause_after_action()
 
 
 def profile_summary(config: dict, tag: str) -> str:

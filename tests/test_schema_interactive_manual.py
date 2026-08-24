@@ -54,7 +54,7 @@ def test_interactive_schema_offers_manual_selection_without_cli_action(monkeypat
     def fake_select(title, options, **kwargs):
         if title == "Estrutura das tabelas":
             menu_labels.extend(option.label for option in options)
-        return "back"
+        return "main_menu"
 
     monkeypatch.setattr("syncdb.cli.select_option", fake_select)
 
@@ -124,3 +124,95 @@ def test_interactive_manual_copy_offers_removal_operations(monkeypatch, tmp_path
 
     assert interactive_schema(paths) == -1000
     assert any("legacy" in label for label in operation_labels)
+
+
+def test_interactive_schema_copy_applies_then_keeps_selected_context(monkeypatch, tmp_path):
+    from syncdb import cli
+
+    paths = app_paths(tmp_path)
+    profile_choices = []
+    schema_calls = []
+    menu_titles = []
+    selections = iter(("copy", "main_menu"))
+
+    monkeypatch.setattr(cli, "load_config", lambda paths: {
+        "profiles": {"prod": {}, "local": {}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    })
+    monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: profile_choices.append((title, default)) or default)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "aluno")
+    monkeypatch.setattr(cli, "pause_after_action", lambda: None)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "cmd_schema", lambda paths, args: schema_calls.append(args) or 0)
+
+    def select(title, options, **kwargs):
+        menu_titles.append(title)
+        return next(selections)
+
+    monkeypatch.setattr(cli, "select_option", select)
+
+    assert cli.interactive_schema(paths) == -1000
+    assert len(profile_choices) == 2
+    assert [call.schema_command for call in schema_calls] == ["copy"]
+    assert schema_calls[0].origin == "prod"
+    assert schema_calls[0].destination == "local"
+    assert schema_calls[0].tables == ["aluno"]
+    assert menu_titles == ["Estrutura das tabelas", "Estrutura das tabelas"]
+
+
+def test_interactive_schema_reselects_only_tables_without_rechoosing_profiles(monkeypatch, tmp_path):
+    from syncdb import cli
+
+    paths = app_paths(tmp_path)
+    profile_choices = []
+    inputs = iter(("aluno", "curso"))
+    selections = iter(("reselect_tables", "main_menu"))
+    prompts = []
+    menu_labels = []
+
+    monkeypatch.setattr(cli, "load_config", lambda paths: {
+        "profiles": {"prod": {}, "local": {}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    })
+    monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: profile_choices.append((title, default)) or default)
+
+    def input_value(prompt=""):
+        prompts.append(prompt)
+        return next(inputs)
+
+    def select(title, options, **kwargs):
+        menu_labels.extend(option.label for option in options)
+        return next(selections)
+
+    monkeypatch.setattr("builtins.input", input_value)
+    monkeypatch.setattr(cli, "select_option", select)
+
+    assert cli.interactive_schema(paths) == -1000
+    assert len(profile_choices) == 2
+    assert prompts == ["Tabelas: ", "Tabelas: "]
+    assert "Escolher tabelas novamente" in menu_labels
+
+
+def test_interactive_schema_back_opens_table_selection(monkeypatch, tmp_path):
+    from syncdb import cli
+
+    paths = app_paths(tmp_path)
+    prompts = []
+    inputs = iter(("aluno", "curso"))
+    selections = iter(("back", "main_menu"))
+
+    monkeypatch.setattr(cli, "load_config", lambda paths: {
+        "profiles": {"prod": {}, "local": {}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    })
+    monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: default)
+
+    def input_value(prompt=""):
+        prompts.append(prompt)
+        return next(inputs)
+
+    monkeypatch.setattr("builtins.input", input_value)
+    monkeypatch.setattr(cli, "select_option", lambda title, options, **kwargs: next(selections))
+
+    assert cli.interactive_schema(paths) == -1000
+    assert prompts == ["Tabelas: ", "Tabelas: "]
