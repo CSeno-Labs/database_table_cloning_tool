@@ -805,9 +805,7 @@ def print_schema_final_sql(plans: list[SchemaPlan], *, heading: bool = True) -> 
         return
     if heading:
         console.print("\n[bold cyan]SQL FINAL[/]")
-    for index, statement in enumerate(statements):
-        if index:
-            console.print()
+    for statement in statements:
         console.print(statement)
 
 

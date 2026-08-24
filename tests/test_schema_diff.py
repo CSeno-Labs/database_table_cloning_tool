@@ -172,7 +172,7 @@ def test_schema_copy_command_shows_read_only_plan(monkeypatch, tmp_path, capsys)
 
 
 def test_schema_plan_sql_flags_control_visual_and_sql_output(monkeypatch, tmp_path, capsys):
-    source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
+    source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2), ("outro", "int", "YES", None, "", None, 3)))
     target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
     config = {
         "profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}},
@@ -193,6 +193,8 @@ def test_schema_plan_sql_flags_control_visual_and_sql_output(monkeypatch, tmp_pa
     assert "Plano de estrutura" in shown
     assert "SQL FINAL" in shown
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in shown
+    assert "SQL FINAL\nALTER TABLE" in shown
+    assert ";\n\nALTER TABLE" not in shown
 
     assert cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(**base, sql=False, no_sql=False, sql_only=True)) == 0
     shown = capsys.readouterr().out
