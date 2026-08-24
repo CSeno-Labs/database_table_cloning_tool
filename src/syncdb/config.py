@@ -47,7 +47,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "last_tables_file": "last_tables.txt",
         "truncate_before_insert": True,
         "create_missing_tables": True,
-        "add_missing_columns": True,
         "batch_size": 1000,
         "default_character_set": "latin1",
     },
