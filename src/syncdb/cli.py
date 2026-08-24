@@ -839,7 +839,9 @@ def render_schema_plan_sql_file(plans: list[SchemaPlan], *, origin: str, destina
                     lines.append(f"--             {symbols[operation.action]} {labels[operation.category]} {operation.name}")
                     lines.extend(f"--               ┗> {detail}" for detail in operation.details)
                     if operation.sql and show_item_sql:
-                        lines.extend(f"-- SQL: {statement}" if include_final_sql else statement for statement in _operation_statements(operation))
+                        for statement in _operation_statements(operation):
+                            lines.append(f"--               SQL: {statement}" if include_final_sql else f"              {statement}")
+                            lines.append("")
     if include_final_sql or not show_item_sql:
         lines.append("\n-- SQL FINAL")
         lines.extend(statements)

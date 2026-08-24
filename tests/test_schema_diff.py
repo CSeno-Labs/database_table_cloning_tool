@@ -210,10 +210,11 @@ def test_saved_schema_plan_is_executable_and_documents_sql_modes():
     default = render_schema_plan_sql_file([plan], origin="prod", destination="local")
     assert "-- Plano de estrutura: aluno (update)" in default
     assert "--     ADICIONAR (1)" in default
+    assert "              ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;\n\n" in default
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in default
 
     final = render_schema_plan_sql_file([plan], origin="prod", destination="local", include_final_sql=True)
-    assert "-- SQL: ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in final
+    assert "--               SQL: ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;\n\n" in final
     assert "-- SQL FINAL" in final
     assert final.count("ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;") == 2
 
