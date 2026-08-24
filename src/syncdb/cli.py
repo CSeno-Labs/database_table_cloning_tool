@@ -22,7 +22,7 @@ from .engine import drop_table, normalize_where_clause, preflight_advanced_sync,
 from .interactive import MenuOption, read_text_or_back, select_option
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_schema_plan, inspect_schema_pair, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
@@ -102,6 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
             schema_cmd.add_argument("--sql", action="store_true", help="Inclui bloco SQL FINAL antes da confirmação")
             schema_cmd.add_argument("--no-sql", action="store_true", help="Oculta SQL abaixo de cada operação")
             schema_cmd.add_argument("--sql-only", action="store_true", help="Imprime somente o SQL antes da confirmação")
+        if name == "recreate-table":
+            schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma a recriação da tabela")
+            schema_cmd.add_argument("--keep-backup", action="store_true", help="Mantém a tabela anterior com nome de backup datado")
         if name == "diff":
             schema_cmd.add_argument("-v", "--verbose", action="store_true", help="Mostra tempos detalhados de leitura")
 
@@ -682,6 +685,9 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
     if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not getattr(args, "interactive", False) and not sys.stdin.isatty():
         console.print("[red]ERRO[/] schema copy/update em modo não interativo exige -y/--yes.")
         return 2
+    if action == SchemaAction.RECREATE_TABLE and not getattr(args, "yes", False) and not sys.stdin.isatty():
+        console.print("[red]ERRO[/] schema recreate-table em modo não interativo exige -y/--yes.")
+        return 2
 
     sql_only = bool(getattr(args, "sql_only", False))
     if not sql_only and not getattr(args, "save", None):
@@ -774,6 +780,27 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             else:
                 console.print(f"[red]FALHOU[/] {plan.table}: após {len(report.applied)} SQL aplicado(s), falhou: {report.failed}")
                 console.print(f"[red]ERRO[/] {report.error}")
+                return 1
+        return 0
+
+    if action == SchemaAction.RECREATE_TABLE:
+        keep_backup = bool(getattr(args, "keep_backup", False))
+        if not getattr(args, "yes", False):
+            keep_backup = input("Deseja manter tabela atual como backup? [s/N]").strip().lower() == "s"
+            typed = input("Digite APLICAR para recriar a tabela: ").strip()
+            if typed.upper() != "APLICAR":
+                console.print("Cancelado. Nenhuma alteração foi feita.")
+                return 1
+        for table in tables:
+            report = execute_recreate_table(origin, destination, table, keep_backup=keep_backup)
+            if report.ok:
+                backup_text = f" Backup mantido: {report.backup_table}." if report.backup_table else " Tabela anterior removida após a troca segura."
+                console.print(f"[green]OK[/] {table}: recriada com a estrutura de {origin['alias']}.{backup_text}")
+            else:
+                console.print(f"[red]FALHOU[/] {table}: falhou em {report.failed}")
+                console.print(f"[red]ERRO[/] {report.error}")
+                if report.backup_table:
+                    console.print(f"[yellow]A tabela anterior foi preservada como backup: {report.backup_table}.[/]")
                 return 1
         return 0
 

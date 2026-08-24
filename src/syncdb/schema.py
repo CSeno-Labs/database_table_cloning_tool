@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 import re
+from secrets import token_hex
 from time import perf_counter
 from typing import Any
 
@@ -105,6 +107,18 @@ class SchemaExecutionReport:
         return self.failed is None
 
 
+@dataclass(frozen=True)
+class RecreateTableReport:
+    applied: tuple[str, ...] = ()
+    backup_table: str | None = None
+    failed: str | None = None
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.failed is None
+
+
 def normalize_schema_action(value: str | None) -> SchemaAction:
     raw = (value or "diff").strip().lower()
     if raw in _SCHEMA_ACTIONS:
@@ -126,6 +140,103 @@ def _close(cursor: Any) -> None:
     close = getattr(cursor, "close", None)
     if close:
         close()
+
+
+_CREATE_TABLE_IDENTIFIER_RE = re.compile(
+    r"(?P<prefix>^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)"
+    r"(?P<identifier>`(?:[^`]|``)+`(?:\.`(?:[^`]|``)+`)?|[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)?)",
+    re.IGNORECASE,
+)
+
+
+def rewrite_create_table_identifier(create_sql: str, target_table: str) -> str:
+    """Replace only SHOW CREATE TABLE's leading table identifier."""
+    target = quote_identifier(target_table)
+    rewritten, count = _CREATE_TABLE_IDENTIFIER_RE.subn(rf"\g<prefix>{target}", create_sql, count=1)
+    if count != 1:
+        raise ValueError("SHOW CREATE TABLE não retornou uma instrução CREATE TABLE válida.")
+    return rewritten
+
+
+def _create_sql_from_row(row: Any) -> str:
+    if isinstance(row, dict):
+        value = row.get("Create Table")
+    elif isinstance(row, (tuple, list)) and len(row) > 1:
+        value = row[1]
+    else:
+        value = None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("SHOW CREATE TABLE não retornou a estrutura da tabela de origem.")
+    return value
+
+
+def _recreate_name(table: str, suffix: str) -> str:
+    parts = table.split(".")
+    return ".".join((*parts[:-1], f"{parts[-1]}_{suffix}"))
+
+
+def execute_recreate_table(
+    source_config: dict[str, Any],
+    target_config: dict[str, Any],
+    table: str,
+    *,
+    keep_backup: bool = False,
+    temporary_name: str | None = None,
+    backup_name: str | None = None,
+) -> RecreateTableReport:
+    """Recreate a destination table using an atomic two-table rename.
+
+    The source DDL is created under a unique temporary name first.  The old
+    target is then renamed away in the same RENAME TABLE statement that puts
+    the new table in place, so a failed CREATE never destroys the target.
+    """
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique = token_hex(4)
+    temporary_name = temporary_name or _recreate_name(table, f"syncdb_recreate_tmp_{stamp}_{unique}")
+    backup_name = backup_name or _recreate_name(table, f"syncdb_backup_{stamp}_{unique}")
+    source_connection = source_config.get("connection") or get_connection(source_config)
+    target_connection = target_config.get("connection") or get_connection(target_config)
+    source_cursor = target_cursor = None
+    applied: list[str] = []
+    current = ""
+    swapped = False
+    try:
+        source_cursor = source_connection.cursor()
+        current = f"SHOW CREATE TABLE {quote_identifier(table)}"
+        source_cursor.execute(current)
+        create_sql = rewrite_create_table_identifier(_create_sql_from_row(source_cursor.fetchone()), temporary_name)
+
+        target_cursor = target_connection.cursor()
+        current = create_sql
+        target_cursor.execute(current)
+        applied.append(current)
+        current = (
+            f"RENAME TABLE {quote_identifier(table)} TO {quote_identifier(backup_name)}, "
+            f"{quote_identifier(temporary_name)} TO {quote_identifier(table)}"
+        )
+        target_cursor.execute(current)
+        applied.append(current)
+        swapped = True
+        if not keep_backup:
+            current = f"DROP TABLE {quote_identifier(backup_name)}"
+            target_cursor.execute(current)
+            applied.append(current)
+        commit = getattr(target_connection, "commit", None)
+        if commit:
+            commit()
+        return RecreateTableReport(tuple(applied), backup_name if keep_backup else None)
+    except Exception as exc:  # noqa: BLE001 - report the exact failed database statement
+        return RecreateTableReport(tuple(applied), backup_name if swapped else None, current or None, str(exc))
+    finally:
+        if source_cursor is not None:
+            _close(source_cursor)
+        if target_cursor is not None:
+            _close(target_cursor)
+        if source_connection is target_connection:
+            source_connection.close()
+        else:
+            source_connection.close()
+            target_connection.close()
 
 
 def _group_indexes(rows: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:

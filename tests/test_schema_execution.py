@@ -156,3 +156,56 @@ def test_schema_copy_and_update_parser_accept_yes_flag():
     parser = build_parser()
     assert parser.parse_args(["schema", "copy", "-t", "child", "--yes"]).yes is True
     assert parser.parse_args(["schema", "update", "-t", "child", "--yes"]).yes is True
+
+
+def test_schema_recreate_table_parser_accepts_yes_and_keep_backup():
+    from syncdb.cli import build_parser
+
+    args = build_parser().parse_args(["schema", "recreate-table", "-t", "child", "--yes", "--keep-backup"])
+
+    assert args.yes is True
+    assert args.keep_backup is True
+
+
+def test_schema_recreate_table_requires_yes_without_tty_before_inspection(monkeypatch, tmp_path, capsys):
+    from syncdb import cli
+
+    args = argparse.Namespace(schema_command="recreate-table", tables=["child"], file=None, origin=None, destination=None, yes=False, keep_backup=False)
+    monkeypatch.setattr(cli, "load_config", lambda paths: {})
+    monkeypatch.setattr(cli, "resolve_profile_pair", lambda *args: ({"alias": "source"}, {"alias": "target"}))
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(cli, "execute_recreate_table", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not execute")))
+
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 2
+    assert "--yes" in capsys.readouterr().out
+
+
+def test_schema_recreate_table_tty_prompts_backup_then_requires_case_insensitive_aplicar(monkeypatch, tmp_path):
+    from syncdb import cli
+
+    args = argparse.Namespace(schema_command="recreate-table", tables=["child"], file=None, origin=None, destination=None, yes=False, keep_backup=False)
+    inputs = iter(("S", "aplicar"))
+    calls = []
+    monkeypatch.setattr(cli, "load_config", lambda paths: {})
+    monkeypatch.setattr(cli, "resolve_profile_pair", lambda *args: ({"alias": "source"}, {"alias": "target"}))
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: calls.append(prompt) or next(inputs))
+    monkeypatch.setattr(cli, "execute_recreate_table", lambda *args, **kwargs: calls.append(kwargs) or type("Report", (), {"ok": True, "backup_table": "child_syncdb_backup_20260824_120000", "failed": None, "error": ""})())
+
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 0
+    assert calls[0] == "Deseja manter tabela atual como backup? [s/N]"
+    assert calls[1] == "Digite APLICAR para recriar a tabela: "
+    assert calls[2] == {"keep_backup": True}
+
+
+def test_schema_recreate_table_yes_defaults_to_deleting_old_table(monkeypatch, tmp_path):
+    from syncdb import cli
+
+    args = argparse.Namespace(schema_command="recreate-table", tables=["child"], file=None, origin=None, destination=None, yes=True, keep_backup=False)
+    calls = []
+    monkeypatch.setattr(cli, "load_config", lambda paths: {})
+    monkeypatch.setattr(cli, "resolve_profile_pair", lambda *args: ({"alias": "source"}, {"alias": "target"}))
+    monkeypatch.setattr(cli, "execute_recreate_table", lambda *args, **kwargs: calls.append(kwargs) or type("Report", (), {"ok": True, "backup_table": None, "failed": None, "error": ""})())
+
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 0
+    assert calls == [{"keep_backup": False}]
