@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .i18n import DEFAULT_LANGUAGE, normalize_language
 from .paths import AppPaths
 
 
@@ -26,6 +27,7 @@ PROFILE_TEMPLATE: dict[str, Any] = {
 }
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "language": DEFAULT_LANGUAGE,
     "profiles": {
         "prod": {
             **PROFILE_TEMPLATE,
@@ -47,7 +49,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "last_tables_file": "last_tables.txt",
         "truncate_before_insert": True,
         "create_missing_tables": True,
-        "add_missing_columns": True,
         "batch_size": 1000,
         "default_character_set": "latin1",
     },
@@ -102,6 +103,7 @@ def merge_defaults(data: dict[str, Any]) -> dict[str, Any]:
     merged = default_config()
     _deep_update(merged, data)
     merged.get("client", {}).pop("auto_download", None)
+    merged["language"] = normalize_language(merged.get("language"))
     for tag, profile in list(merged.get("profiles", {}).items()):
         merged["profiles"][tag] = normalize_profile(tag, profile)
     return merged

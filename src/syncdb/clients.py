@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 
 from .paths import AppPaths
+from .i18n import t
 
 
 class ClientSource(str, Enum):
@@ -81,7 +82,7 @@ def resolve_client(paths: AppPaths | None = None, mode: str = "auto", preferred_
     preferred_source = (preferred_source or "managed").lower()
 
     if mode == "python":
-        return ResolvedEngine("python", None, "Modo python solicitado.")
+        return ResolvedEngine("python", None, t("client.reason.python"))
 
     clients: list[DumpClient | None]
     if preferred_source == "system":
@@ -91,9 +92,9 @@ def resolve_client(paths: AppPaths | None = None, mode: str = "auto", preferred_
 
     for client in clients:
         if client:
-            return ResolvedEngine("dump", client, f"Cliente {client.source.value} disponível ({client.vendor}).")
+            return ResolvedEngine("dump", client, t("client.reason.available", source=client.source.value, vendor=client.vendor))
 
     if mode in {"dump", "managed-dump", "system-dump"}:
-        return ResolvedEngine("missing", None, "Modo dump solicitado, mas nenhum cliente dump está instalado.")
+        return ResolvedEngine("missing", None, t("client.reason.dump_missing"))
 
-    return ResolvedEngine("python", None, "Nenhum cliente dump disponível; usando engine Python.")
+    return ResolvedEngine("python", None, t("client.reason.fallback"))

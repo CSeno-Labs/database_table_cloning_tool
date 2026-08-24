@@ -286,9 +286,9 @@ def test_interactive_menu_does_not_pause_when_first_three_items_return_back(monk
     assert pauses == []
 
 
-def test_interactive_sync_uses_temp_backup_when_backup_enabled(monkeypatch, tmp_path: Path):
+def test_interactive_sync_does_not_prompt_for_backup(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["1", "1", "2", "periodo aluno", "s", "s", "7"])
+    answers = iter(["1", "1", "2", "periodo aluno", "s", "8"])
     seen = []
 
     def fake_cmd_sync(paths, args):
@@ -304,7 +304,7 @@ def test_interactive_sync_uses_temp_backup_when_backup_enabled(monkeypatch, tmp_
     assert code == 0
     assert len(seen) == 1
     assert seen[0].tables == ["periodo", "aluno"]
-    assert seen[0].backup == "temp"
+    assert seen[0].backup == "none"
 
 
 def test_sync_backup_temp_flag_behaves_like_backup_without_value(monkeypatch, tmp_path: Path):
@@ -330,7 +330,7 @@ def test_sync_backup_temp_flag_behaves_like_backup_without_value(monkeypatch, tm
 
 def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Path, capsys):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["6", "1", "1", "2"])
+    answers = iter(["7", "1", "1", "2"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     code = main(["--config", str(config)])
@@ -343,7 +343,7 @@ def test_interactive_defaults_accepts_profile_numbers(monkeypatch, tmp_path: Pat
 
 def test_interactive_sync_pauses_after_showing_result(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["1", "1", "2", "periodo", "n", "s", "7"])
+    answers = iter(["1", "1", "2", "periodo", "s", "8"])
     prompts = []
     pauses = []
 
@@ -364,12 +364,12 @@ def test_interactive_sync_pauses_after_showing_result(monkeypatch, tmp_path: Pat
 
     assert code == 0
     assert pauses == [True]
-    assert "Criar backup da tabela destino antes de sobrescrever? [s/N] (Default: Não) " in prompts
+    assert "Criar backup da tabela destino antes de sobrescrever? [s/N] (Default: Não) " not in prompts
 
 
-def test_interactive_advanced_sync_can_choose_backup_keep(monkeypatch, tmp_path: Path):
+def test_interactive_advanced_sync_no_longer_offers_backup(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["2", "3", "periodo", "6", "3", "8", "s"])
+    answers = iter(["2", "3", "periodo", "7", "s"])
     seen = []
 
     def fake_input(prompt=""):
@@ -387,12 +387,12 @@ def test_interactive_advanced_sync_can_choose_backup_keep(monkeypatch, tmp_path:
     assert code == 0
     assert len(seen) == 1
     assert seen[0].tables == ["periodo"]
-    assert seen[0].backup == "keep"
+    assert seen[0].backup == "none"
 
 
 def test_interactive_backup_pauses_after_showing_result(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
-    answers = iter(["3", "2", "periodo", "", "7"])
+    answers = iter(["4", "2", "periodo", "", "8"])
     prompts = []
     pauses = []
 

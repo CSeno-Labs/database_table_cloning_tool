@@ -225,32 +225,16 @@ def sanitize_collation(collation: str | None) -> str | None:
     return collation.replace("0900_ai_ci", "general_ci")
 
 
-def ensure_structure(config: dict[str, Any], table: str, create_sql: str, source_columns: dict[str, dict[str, Any]], *, create_missing: bool, add_missing_columns: bool) -> None:
+def ensure_structure(config: dict[str, Any], table: str, create_sql: str, *, create_missing: bool) -> None:
     exists = table_exists(config, table)
+    if exists:
+        return
     conn = get_connection(config)
     try:
         cur = conn.cursor()
-        if not exists:
-            if not create_missing:
-                raise SyncError(f"Tabela {table} não existe no destino e create_missing_tables=false.")
-            cur.execute(create_sql)
-            conn.commit()
-            return
-
-        if not add_missing_columns:
-            return
-
-        target_columns = get_columns(config, table)
-        for name, details in source_columns.items():
-            if name in target_columns:
-                continue
-            col_type = details.get("Type") or details.get("type")
-            collation = sanitize_collation(details.get("Collation") or details.get("collation"))
-            sql = f"ALTER TABLE {quote_identifier(table)} ADD COLUMN {quote_identifier(name)} {col_type}"
-            if collation:
-                sql += f" COLLATE {collation}"
-            sql += " NULL"
-            cur.execute(sql)
+        if not create_missing:
+            raise SyncError(f"Tabela {table} não existe no destino e create_missing_tables=false.")
+        cur.execute(create_sql)
         conn.commit()
     finally:
         conn.close()
@@ -482,7 +466,7 @@ def run_python_advanced_sync(config: dict[str, Any], table: str, *, where_clause
             raise SyncError(f"Tabela {table} não encontrada na origem.")
         create_sql = sanitize_create_table(get_create_table(origem, table))
         stage = "ensure_dest_structure"
-        ensure_structure(destino, table, create_sql, source_columns, create_missing=bool(sync_cfg.get("create_missing_tables", True)), add_missing_columns=bool(sync_cfg.get("add_missing_columns", True)))
+        ensure_structure(destino, table, create_sql, create_missing=bool(sync_cfg.get("create_missing_tables", True)))
         stage = "read_source_keys"
         source_keys = select_keys(origem, table, primary_key, where)
         if not source_keys:
@@ -559,9 +543,7 @@ def run_python_sync(config: dict[str, Any], table: str) -> TableResult:
             destino,
             table,
             create_sql,
-            source_columns,
             create_missing=bool(sync_cfg.get("create_missing_tables", True)),
-            add_missing_columns=bool(sync_cfg.get("add_missing_columns", True)),
         )
         if table_exists(destino, table) and sync_cfg.get("backup_before_replace"):
             stage = "backup_dest"

@@ -1,4 +1,25 @@
-from syncdb.interactive import MenuOption, apply_menu_key, select_option
+from syncdb.interactive import MenuOption, apply_menu_key, menu_option_window, print_menu, read_text_or_back, select_option
+
+
+def test_menu_option_window_keeps_cursor_visible_in_long_list():
+    assert menu_option_window(0, 20, 6) == (0, 6)
+    assert menu_option_window(10, 20, 6) == (7, 13)
+    assert menu_option_window(19, 20, 6) == (14, 20)
+
+
+def test_select_option_compact_omits_blank_lines_between_main_menu_items(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    select_option("Menu", [MenuOption("A", "a"), MenuOption("B", "b")], key_reader=lambda: "enter", compact=True)
+
+    shown = capsys.readouterr().out
+    assert "➤ 1. A\n  2. B" in shown
+
+
+def test_select_option_accepts_custom_hotkey(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    assert select_option("Menu", [MenuOption("A", "a")], key_reader=lambda: "t", hotkeys={"t": "tables"}) == "tables"
 
 
 def test_apply_menu_key_wraps_with_arrows():
@@ -31,6 +52,20 @@ def test_ctrl_c_character_raises_keyboard_interrupt():
         pass
     else:
         raise AssertionError("Ctrl+C character should raise KeyboardInterrupt")
+
+
+def test_table_input_escape_returns_no_selection(monkeypatch):
+    from syncdb.cli import read_tables_input
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "\x1b")
+
+    assert read_tables_input() is None
+
+
+def test_read_text_or_back_returns_none_immediately_on_escape(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: "escape") is None
 
 
 def test_sync_context_text_matches_step_labels():
@@ -84,7 +119,22 @@ def test_select_option_tty_does_not_style_description_like_selected_item(monkeyp
     assert selected == "item"
     assert ("clear", None, None) not in calls
     assert ("print", "➤ 1. Item", "reverse bold") in calls
-    assert ("print", "      ┗> resposta", "") in calls
+    assert ("print", "      ┗> resposta", "dim") in calls
+
+
+def test_print_menu_keeps_one_blank_line_between_items():
+    calls = []
+
+    class FakeConsole:
+        def print(self, text="", style=""):
+            calls.append(str(text))
+
+    print_menu(FakeConsole(), "Menu", [MenuOption("Sem detalhe", "a"), MenuOption("Com detalhe", "b", "descrição"), MenuOption("Voltar", "back")], 0)
+
+    first = calls.index("➤ 1. Sem detalhe")
+    second = calls.index("  2. Com detalhe")
+    assert calls[first + 1] == ""
+    assert calls[second + 2] == ""
 
 
 def test_advanced_mode_options_allow_dump_only_without_partial_sync():
