@@ -116,7 +116,7 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
         style = "reverse bold" if idx == index else ""
         lines.append(Text(f"{marker} {idx + 1}. {option.label}", style=style))
         if option.description:
-            lines.append(Text(f"      ┗> {option.description}"))
+            lines.append(Text(f"      ┗> {option.description}", style="dim"))
         if idx < end - 1:
             lines.append(Text(""))
     if end < len(option_list):
@@ -139,7 +139,7 @@ def print_menu(console: Console, title: str, option_list: list[MenuOption], inde
         style = "reverse bold" if idx == index else ""
         console.print(f"{marker} {idx + 1}. {option.label}", style=style)
         if option.description:
-            console.print(f"      ┗> {option.description}")
+            console.print(f"      ┗> {option.description}", style="dim")
         if idx < end - 1:
             console.print()
     if end < len(option_list):
