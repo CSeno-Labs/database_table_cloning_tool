@@ -7,6 +7,15 @@ def test_menu_option_window_keeps_cursor_visible_in_long_list():
     assert menu_option_window(19, 20, 6) == (14, 20)
 
 
+def test_select_option_compact_omits_blank_lines_between_main_menu_items(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    select_option("Menu", [MenuOption("A", "a"), MenuOption("B", "b")], key_reader=lambda: "enter", compact=True)
+
+    shown = capsys.readouterr().out
+    assert "➤ 1. A\n  2. B" in shown
+
+
 def test_select_option_accepts_custom_hotkey(monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 

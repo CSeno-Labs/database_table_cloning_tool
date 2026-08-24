@@ -1295,6 +1295,7 @@ def run_interactive_menu(paths: AppPaths) -> int:
                 MenuOption("Sair", "exit"),
             ],
             console=console,
+            compact=True,
         )
         if choice in {"exit", "back"}:
             print_exit_banner()

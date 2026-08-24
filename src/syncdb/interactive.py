@@ -136,7 +136,7 @@ def read_key() -> str:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def menu_renderable(title: str, option_list: list[MenuOption], index: int, footer: str = "") -> Group:
+def menu_renderable(title: str, option_list: list[MenuOption], index: int, footer: str = "", *, compact: bool = False) -> Group:
     lines = [
         Text(title, style="bold"),
         Text("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n"),
@@ -151,7 +151,7 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
         lines.append(Text(f"{marker} {idx + 1}. {option.label}", style=style))
         if option.description:
             lines.append(Text(f"      ┗> {option.description}", style="dim"))
-        if idx < end - 1:
+        if idx < end - 1 and not compact:
             lines.append(Text(""))
     if end < len(option_list):
         lines.append(Text("↓ mais opções abaixo", style="dim"))
@@ -161,7 +161,7 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
     return Group(*lines)
 
 
-def print_menu(console: Console, title: str, option_list: list[MenuOption], index: int, footer: str = "") -> None:
+def print_menu(console: Console, title: str, option_list: list[MenuOption], index: int, footer: str = "", *, compact: bool = False) -> None:
     console.print(f"[bold]{title}[/]")
     console.print("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n")
     start, end = menu_option_window(index, len(option_list))
@@ -174,7 +174,7 @@ def print_menu(console: Console, title: str, option_list: list[MenuOption], inde
         console.print(f"{marker} {idx + 1}. {option.label}", style=style)
         if option.description:
             console.print(f"      ┗> {option.description}", style="dim")
-        if idx < end - 1:
+        if idx < end - 1 and not compact:
             console.print()
     if end < len(option_list):
         console.print("[dim]↓ mais opções abaixo[/]")
@@ -191,6 +191,7 @@ def select_option(
     key_reader: KeyReader = read_key,
     footer: str = "",
     hotkeys: dict[str, Any] | None = None,
+    compact: bool = False,
 ) -> Any:
     console = console or Console()
     hotkeys = {key.lower(): value for key, value in (hotkeys or {}).items()}
@@ -217,7 +218,7 @@ def select_option(
     index = max(0, min(default_index, len(option_list) - 1))
     if not getattr(console, "is_terminal", False):
         while True:
-            print_menu(console, title, option_list, index, footer)
+            print_menu(console, title, option_list, index, footer, compact=compact)
             key = key_reader()
             if key.lower() in hotkeys:
                 return hotkeys[key.lower()]
@@ -226,7 +227,7 @@ def select_option(
                 return selected
 
     with Live(
-        menu_renderable(title, option_list, index, footer),
+        menu_renderable(title, option_list, index, footer, compact=compact),
         console=console,
         screen=True,
         transient=False,
@@ -239,4 +240,4 @@ def select_option(
             index, selected = apply_menu_key(index, key, option_list)
             if selected is not None:
                 return selected
-            live.update(menu_renderable(title, option_list, index, footer), refresh=True)
+            live.update(menu_renderable(title, option_list, index, footer, compact=compact), refresh=True)
