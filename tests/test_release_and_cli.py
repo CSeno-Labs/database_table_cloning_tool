@@ -12,6 +12,13 @@ def test_version_flag_reports_3_0_0(capsys):
     assert "sync-db 3.0.0" in capsys.readouterr().out
 
 
+def test_short_version_flag_reports_3_0_0(capsys):
+    code = main(["-v"])
+
+    assert code == 0
+    assert "sync-db 3.0.0" in capsys.readouterr().out
+
+
 def test_update_reinstalls_from_main_with_uv(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr("syncdb.cli.shutil.which", lambda name: "/usr/bin/uv" if name == "uv" else None)
