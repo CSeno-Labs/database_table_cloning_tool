@@ -740,7 +740,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 print_schema_final_sql(plans)
         if not getattr(args, "yes", False):
             typed = input("Digite APLICAR para executar este plano: ").strip()
-            if typed != "APLICAR":
+            if typed.upper() != "APLICAR":
                 console.print("Cancelado. Nenhuma alteração foi feita.")
                 return 1
         for plan in plans:

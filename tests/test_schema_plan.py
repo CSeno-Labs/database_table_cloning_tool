@@ -73,6 +73,6 @@ def test_plan_generates_sql_for_real_column_reordering():
     plan = build_schema_plan(compare_schema(source, target), action="copy", source=source, target=target)
     move = next(item for item in plan.operations if item.action == "move")
 
-    assert move.name == "email"
-    assert move.details == ("destino: depois de id", "origem: depois de nome")
-    assert move.sql == "ALTER TABLE `pessoa` MODIFY COLUMN `email` VARCHAR(100) NULL AFTER `nome`;"
+    assert move.name == "nome"
+    assert move.details == ("origem: depois de id",)
+    assert move.sql == "ALTER TABLE `pessoa` MODIFY COLUMN `nome` VARCHAR(100) NOT NULL AFTER `id`;"

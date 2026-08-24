@@ -264,26 +264,35 @@ def _column_change_reasons(source: tuple[Any, ...], target: tuple[Any, ...]) -> 
     return tuple(label for index, label in enumerate(labels, 1) if source[index] != target[index])
 
 
-def _longest_common_subsequence(left: tuple[str, ...], right: tuple[str, ...]) -> tuple[str, ...]:
-    lengths = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
-    for left_index in range(len(left) - 1, -1, -1):
-        for right_index in range(len(right) - 1, -1, -1):
-            if left[left_index] == right[right_index]:
-                lengths[left_index][right_index] = 1 + lengths[left_index + 1][right_index + 1]
-            else:
-                lengths[left_index][right_index] = max(lengths[left_index + 1][right_index], lengths[left_index][right_index + 1])
-    common = []
-    left_index = right_index = 0
-    while left_index < len(left) and right_index < len(right):
-        if left[left_index] == right[right_index]:
-            common.append(left[left_index])
-            left_index += 1
-            right_index += 1
-        elif lengths[left_index + 1][right_index] > lengths[left_index][right_index + 1]:
-            left_index += 1
+def _column_move_plan(source_names: list[str], target_names: list[str], shared: set[str]) -> tuple[tuple[str, str | None], ...]:
+    """Move shared columns into source order while simulating every move."""
+    simulated = list(target_names)
+    moves: list[tuple[str, str | None]] = []
+    for source_position, name in enumerate(source_names):
+        if name not in shared:
+            continue
+        after = source_names[source_position - 1] if source_position else None
+        current_position = simulated.index(name)
+        expected_position = simulated.index(after) + 1 if after is not None else 0
+        if current_position == expected_position:
+            continue
+        simulated.pop(current_position)
+        simulated.insert(simulated.index(after) + 1 if after is not None else 0, name)
+        moves.append((name, after))
+    return tuple(moves)
+
+
+def _target_order_after_additions(source_names: list[str], target_names: list[str]) -> list[str]:
+    """Simulate source-order ADD COLUMN operations before planning moves."""
+    simulated = list(target_names)
+    for position, name in enumerate(source_names):
+        if name in simulated:
+            continue
+        if position:
+            simulated.insert(simulated.index(source_names[position - 1]) + 1, name)
         else:
-            right_index += 1
-    return tuple(common)
+            simulated.insert(0, name)
+    return simulated
 
 
 def _compare_columns(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[Any, ...], ...]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]]:
@@ -296,8 +305,7 @@ def _compare_columns(source: tuple[tuple[Any, ...], ...], target: tuple[tuple[An
     changed = tuple(name for name, _ in column_changes)
     source_order = tuple(str(item[0]) for item in source if str(item[0]) in shared)
     target_order = tuple(str(item[0]) for item in target if str(item[0]) in shared)
-    kept_in_place = set(_longest_common_subsequence(source_order, target_order))
-    reordered = tuple(name for name in source_order if name not in kept_in_place)
+    reordered = tuple(name for name, _ in _column_move_plan(list(source_order), list(target_order), set(shared)))
     return missing, extra, changed, reordered, column_changes
 
 
@@ -366,10 +374,12 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
     operations: list[SchemaPlanOperation] = []
     source_columns = {str(column[0]): column for column in (source.columns if source else ())}
     target_columns = {str(column[0]): column for column in (target.columns if target else ())}
-    for name in diff.missing_columns:
+    source_names = [str(column[0]) for column in source.columns] if source else []
+    target_names = [str(column[0]) for column in target.columns] if target else []
+    shared_columns = set(source_columns) & set(target_columns)
+    for name in (name for name in source_names if name in diff.missing_columns):
         details = []
-        source_names = [str(column[0]) for column in source.columns] if source else []
-        position = source_names.index(name) if name in source_names else 0
+        position = source_names.index(name)
         if name in source_columns:
             details.append(_column_description(source_columns[name]))
             details.append(f"depois de {source_names[position - 1]}" if position else "primeira coluna")
@@ -382,20 +392,14 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
             details = (f"destino: {_column_description(target_columns[name])}", f"origem: {_column_description(source_columns[name])}")
         sql = f"ALTER TABLE {quote_identifier(diff.table)} MODIFY COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])};" if name in source_columns else ""
         operations.append(SchemaPlanOperation("modify", "column", name, details, sql))
-    for name in diff.reordered_columns:
+    move_target_names = _target_order_after_additions(source_names, target_names)
+    for name, source_after in _column_move_plan(source_names, move_target_names, shared_columns):
         details = ()
         sql = ""
-        if name in source_columns and name in target_columns:
-            source_names = [str(column[0]) for column in source.columns] if source else []
-            target_names = [str(column[0]) for column in target.columns] if target else []
-            source_position = source_names.index(name)
-            target_position = target_names.index(name)
-            source_after = source_names[source_position - 1] if source_position else "início"
-            target_after = target_names[target_position - 1] if target_position else "início"
-            if source_after == target_after:
-                continue
-            details = (f"destino: depois de {target_after}", f"origem: depois de {source_after}")
-            after_sql = f" AFTER {quote_identifier(source_after)}" if source_position else " FIRST"
+        if name in source_columns:
+            source_after_label = source_after or "início"
+            details = (f"origem: depois de {source_after_label}",)
+            after_sql = f" AFTER {quote_identifier(source_after)}" if source_after else " FIRST"
             sql = f"ALTER TABLE {quote_identifier(diff.table)} MODIFY COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])}{after_sql};"
         operations.append(SchemaPlanOperation("move", "column", name, details, sql))
     for name in diff.extra_columns:

@@ -134,7 +134,7 @@ def test_schema_copy_recomputes_displays_and_executes_plan_with_yes(monkeypatch,
     assert "Plano de estrutura: child (copy)" in capsys.readouterr().out
 
 
-def test_schema_copy_in_tty_requires_exact_typed_confirmation(monkeypatch, tmp_path):
+def test_schema_copy_in_tty_accepts_case_insensitive_typed_confirmation(monkeypatch, tmp_path):
     from syncdb import cli
 
     args = argparse.Namespace(schema_command="copy", tables=["child"], file=None, origin=None, destination=None, yes=False)
@@ -145,9 +145,9 @@ def test_schema_copy_in_tty_requires_exact_typed_confirmation(monkeypatch, tmp_p
     monkeypatch.setattr(cli, "inspect_schema_pair", lambda *args: (SchemaSnapshot("child", True), SchemaSnapshot("child", True)))
     monkeypatch.setattr(cli, "build_schema_plan", lambda *args, **kwargs: plan)
     monkeypatch.setattr("builtins.input", lambda prompt: "aplicar")
-    monkeypatch.setattr(cli, "execute_schema_plan", lambda *args: (_ for _ in ()).throw(AssertionError("must not execute")))
+    monkeypatch.setattr(cli, "execute_schema_plan", lambda *args: type("Report", (), {"ok": True, "applied": (), "failed": None, "error": ""})())
 
-    assert cli.cmd_schema(app_paths(tmp_path), args) == 1
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 0
 
 
 def test_schema_copy_and_update_parser_accept_yes_flag():
