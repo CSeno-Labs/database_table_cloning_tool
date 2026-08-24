@@ -97,6 +97,42 @@ def test_interactive_manual_selects_only_one_operation_and_executes_it(monkeypat
     assert cursor.executed == ["ALTER TABLE `aluno` ADD COLUMN `nome` VARCHAR(100);"]
 
 
+
+
+def test_interactive_manual_keeps_cursor_on_toggled_long_list_operation(monkeypatch, tmp_path):
+    from syncdb import cli
+
+    paths = app_paths(tmp_path)
+    cursor = FakeCursor()
+    plan = SchemaPlan("aluno", SchemaAction.COPY, tuple(
+        SchemaPlanOperation("add", "column", f"campo_{index}", sql=f"ALTER TABLE `aluno` ADD COLUMN `campo_{index}` INT;")
+        for index in range(15)
+    ))
+    default_indexes = []
+    selections = iter(("manual", "toggle:12", "review"))
+
+    monkeypatch.setattr(cli, "load_config", lambda paths: {
+        "profiles": {"prod": {}, "local": {"connection": FakeConnection(cursor)}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    })
+    monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "aluno" if prompt == "Tabelas: " else "aplicar")
+    monkeypatch.setattr(cli, "inspect_schema_pair", lambda *args: (SchemaSnapshot("aluno", True), SchemaSnapshot("aluno", True)))
+    monkeypatch.setattr(cli, "compare_schema", lambda *args: object())
+    monkeypatch.setattr(cli, "build_schema_plan", lambda *args, **kwargs: plan)
+
+    def select(title, options, **kwargs):
+        if title.startswith("Seleção manual"):
+            default_indexes.append(kwargs.get("default_index", 0))
+        return next(selections)
+
+    monkeypatch.setattr(cli, "select_option", select)
+
+    assert cli.interactive_schema(paths) == 0
+    assert default_indexes == [0, 12]
+    assert cursor.executed == ["ALTER TABLE `aluno` ADD COLUMN `campo_12` INT;"]
+
+
 def test_interactive_manual_copy_offers_removal_operations(monkeypatch, tmp_path):
     paths = app_paths(tmp_path)
     plan = SchemaPlan("aluno", SchemaAction.COPY, (

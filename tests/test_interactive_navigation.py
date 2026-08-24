@@ -1,4 +1,10 @@
-from syncdb.interactive import MenuOption, apply_menu_key, print_menu, select_option
+from syncdb.interactive import MenuOption, apply_menu_key, menu_option_window, print_menu, select_option
+
+
+def test_menu_option_window_keeps_cursor_visible_in_long_list():
+    assert menu_option_window(0, 20, 6) == (0, 6)
+    assert menu_option_window(10, 20, 6) == (7, 13)
+    assert menu_option_window(19, 20, 6) == (14, 20)
 
 
 def test_apply_menu_key_wraps_with_arrows():

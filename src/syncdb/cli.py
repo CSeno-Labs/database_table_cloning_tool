@@ -1415,10 +1415,13 @@ def interactive_manual_schema_selection(config: dict, origin_tag: str, destinati
     selected_by_table: dict[str, set[int]] = {plan.table: set() for plan in plans}
     for plan in plans:
         selected = selected_by_table[plan.table]
+        cursor_index = 0
         while True:
+            options = _manual_schema_operation_options(plan, selected)
             choice = select_option(
                 f"Seleção manual — {plan.table}",
-                _manual_schema_operation_options(plan, selected),
+                options,
+                default_index=cursor_index,
                 console=console,
                 footer="[x] selecionada; [ ] não será aplicada. As operações são agrupadas por ação e categoria.",
             )
@@ -1428,6 +1431,7 @@ def interactive_manual_schema_selection(config: dict, origin_tag: str, destinati
                 break
             if isinstance(choice, str) and choice.startswith("toggle:"):
                 index = int(choice.removeprefix("toggle:"))
+                cursor_index = next((position for position, option in enumerate(options) if option.value == choice), cursor_index)
                 if index in selected:
                     selected.remove(index)
                 else:

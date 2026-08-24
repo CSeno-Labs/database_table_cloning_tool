@@ -20,6 +20,19 @@ class MenuOption:
 KeyReader = Callable[[], str]
 
 
+MAX_VISIBLE_MENU_OPTIONS = 10
+
+
+def menu_option_window(index: int, option_count: int, max_visible_options: int = MAX_VISIBLE_MENU_OPTIONS) -> tuple[int, int]:
+    """Return the half-open option range that keeps the active cursor visible."""
+    if option_count <= 0:
+        return 0, 0
+    visible = max(1, min(max_visible_options, option_count))
+    cursor = max(0, min(index, option_count - 1))
+    start = max(0, min(cursor - visible // 2, option_count - visible))
+    return start, start + visible
+
+
 def apply_menu_key(index: int, key: str, options: list[MenuOption]) -> tuple[int, Any | None]:
     if not options:
         return 0, None
@@ -94,14 +107,20 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
         Text(title, style="bold"),
         Text("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n"),
     ]
-    for idx, option in enumerate(option_list):
+    start, end = menu_option_window(index, len(option_list))
+    if start:
+        lines.append(Text("↑ mais opções acima", style="dim"))
+    for idx in range(start, end):
+        option = option_list[idx]
         marker = "➤" if idx == index else " "
         style = "reverse bold" if idx == index else ""
         lines.append(Text(f"{marker} {idx + 1}. {option.label}", style=style))
         if option.description:
             lines.append(Text(f"      ┗> {option.description}"))
-        if idx < len(option_list) - 1:
+        if idx < end - 1:
             lines.append(Text(""))
+    if end < len(option_list):
+        lines.append(Text("↓ mais opções abaixo", style="dim"))
     if footer:
         lines.append(Text(""))
         lines.append(Text(footer, style="dim"))
@@ -111,14 +130,20 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
 def print_menu(console: Console, title: str, option_list: list[MenuOption], index: int, footer: str = "") -> None:
     console.print(f"[bold]{title}[/]")
     console.print("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n")
-    for idx, option in enumerate(option_list):
+    start, end = menu_option_window(index, len(option_list))
+    if start:
+        console.print("[dim]↑ mais opções acima[/]")
+    for idx in range(start, end):
+        option = option_list[idx]
         marker = "➤" if idx == index else " "
         style = "reverse bold" if idx == index else ""
         console.print(f"{marker} {idx + 1}. {option.label}", style=style)
         if option.description:
             console.print(f"      ┗> {option.description}")
-        if idx < len(option_list) - 1:
+        if idx < end - 1:
             console.print()
+    if end < len(option_list):
+        console.print("[dim]↓ mais opções abaixo[/]")
     if footer:
         console.print(f"\n[dim]{footer}[/]")
 
