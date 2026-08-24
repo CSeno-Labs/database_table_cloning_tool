@@ -20,7 +20,7 @@ from .config import ConfigError, ensure_config, load_config, profile_tag, redact
 from .db import test_connection
 from .engine import drop_table, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
 from .interactive import MenuOption, read_text_or_back, select_option
-from .i18n import SUPPORTED_LANGUAGES, get_language, normalize_language, set_language, t
+from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_language, set_language, t
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
 from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
@@ -30,11 +30,6 @@ console = Console()
 APP_VERSION = "3.0.0"
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
-
-
-def ui(portuguese: str, english: str) -> str:
-    """Use for small interactive phrases not shared with command output."""
-    return english if get_language() == "en" else portuguese
 
 
 def is_menu_back(status: object) -> bool:
@@ -70,6 +65,23 @@ def _language_override(argv: list[str]) -> str | None:
     return None
 
 
+def _paths_from_argv(argv: list[str]) -> AppPaths:
+    """Resolve an explicit config path before constructing localized argparse."""
+    config_value: str | None = None
+    for index, value in enumerate(argv):
+        if value == "--config" and index + 1 < len(argv):
+            config_value = argv[index + 1]
+            break
+        if value.startswith("--config="):
+            config_value = value.partition("=")[2]
+            break
+    if not config_value:
+        return AppPaths.current()
+    cfg_path = Path(config_value).expanduser().resolve()
+    base_dir = cfg_path.parent.parent if cfg_path.parent.name == "config" else cfg_path.parent
+    return AppPaths(config_dir=cfg_path.parent, data_dir=base_dir / "data", state_dir=base_dir / "state", cache_dir=base_dir / "cache")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sync-db", description=t("app.description"))
     parser.add_argument("--version", action="store_true", help=t("help.version"))
@@ -77,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     init = sub.add_parser("init", help=t("help.init"))
-    init.add_argument("--quiet", action="store_true", help="Não imprime mensagens informativas")
+    init.add_argument("--quiet", action="store_true", help=t("help.quiet"))
     sub.add_parser("doctor", help=t("help.doctor"))
     update_app = sub.add_parser("update", help=t("help.update"))
     update_app.add_argument("--branch", default="main", help=argparse.SUPPRESS)
@@ -85,20 +97,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = sub.add_parser("sync", help=t("help.sync"))
     add_table_args(sync)
-    sync.add_argument("-o", "--origin", help="Tag do banco de origem")
-    sync.add_argument("-d", "--destination", help="Tag do banco de destino")
-    sync.add_argument("--last", action="store_true", help="Usa as últimas tabelas sincronizadas")
-    sync.add_argument("--mode", choices=["auto", "dump", "managed-dump", "system-dump", "python"], help="Motor de sincronização")
-    sync.add_argument("--where", help="Condição WHERE para sincronização parcial (com ou sem a palavra WHERE)")
-    sync.add_argument("--insert-missing", action="store_true", help="Insere apenas linhas da origem cuja chave primária ainda não existe no destino")
-    sync.add_argument("-y", "--yes", action="store_true", help="Confirma avisos da sincronização avançada")
-    sync.add_argument("--dry-run", action="store_true", help="Mostra o que seria feito sem alterar o destino")
-    sync.add_argument("--backup", nargs="?", const="temp", choices=["temp", "keep", "none"], help="Cria backup antes de sobrescrever; sem valor remove ao terminar com sucesso, use --backup keep para manter")
+    sync.add_argument("-o", "--origin", help=t("help.sync_origin"))
+    sync.add_argument("-d", "--destination", help=t("help.sync_destination"))
+    sync.add_argument("--last", action="store_true", help=t("help.last"))
+    sync.add_argument("--mode", choices=["auto", "dump", "managed-dump", "system-dump", "python"], help=t("help.mode"))
+    sync.add_argument("--where", help=t("help.where"))
+    sync.add_argument("--insert-missing", action="store_true", help=t("help.insert_missing"))
+    sync.add_argument("-y", "--yes", action="store_true", help=t("help.yes_sync"))
+    sync.add_argument("--dry-run", action="store_true", help=t("help.dry_run"))
+    sync.add_argument("--backup", nargs="?", const="temp", choices=["temp", "keep", "none"], help=t("help.backup_mode"))
 
     backup = sub.add_parser("backup", help=t("help.backup"))
     add_table_args(backup)
-    backup.add_argument("-d", "--destination", help="Tag do banco onde o backup será criado")
-    backup.add_argument("-y", "--yes", action="store_true", help="Usa nomes sugeridos sem perguntar")
+    backup.add_argument("-d", "--destination", help=t("help.backup_destination"))
+    backup.add_argument("-y", "--yes", action="store_true", help=t("help.yes_backup"))
 
     schema = sub.add_parser("schema", help=t("help.schema"), description=t("help.schema"))
     schema_sub = schema.add_subparsers(dest="schema_command")
@@ -127,58 +139,58 @@ def build_parser() -> argparse.ArgumentParser:
             schema_cmd.add_argument("--no-sql", action="store_true", help=t("help.no_sql"))
             schema_cmd.add_argument("--sql-only", action="store_true", help=t("help.sql_only"))
         if name == "recreate-table":
-            schema_cmd.add_argument("-y", "--yes", action="store_true", help="Confirma a recriação da tabela")
-            schema_cmd.add_argument("--keep-backup", action="store_true", help="Mantém a tabela anterior com nome de backup datado")
+            schema_cmd.add_argument("-y", "--yes", action="store_true", help=t("help.recreate_yes"))
+            schema_cmd.add_argument("--keep-backup", action="store_true", help=t("help.keep_backup"))
         if name == "diff":
-            schema_cmd.add_argument("-v", "--verbose", action="store_true", help="Mostra tempos detalhados de leitura")
+            schema_cmd.add_argument("-v", "--verbose", action="store_true", help=t("help.verbose"))
 
-    tables = sub.add_parser("tables", help="Lista tabelas identificadas")
-    tables.add_argument("-t", "--tables", nargs="+", help="Tabelas inline")
-    tables.add_argument("-f", "--file", help="Arquivo .csv/.txt")
+    tables = sub.add_parser("tables", help=t("help.tables"))
+    tables.add_argument("-t", "--tables", nargs="+", help=t("help.tables_inline"))
+    tables.add_argument("-f", "--file", help=t("help.tables_file"))
 
-    cfg = sub.add_parser("config", help="Gerencia configuração")
+    cfg = sub.add_parser("config", help=t("help.config_cmd"))
     cfg_sub = cfg.add_subparsers(dest="config_command")
-    cfg_sub.add_parser("path", help="Mostra caminho do config")
-    cfg_sub.add_parser("show", help="Mostra config com senha mascarada")
-    cfg_sub.add_parser("edit", help="Abre config no editor padrão")
-    cfg_sub.add_parser("remove", help="Remove config com confirmação")
+    cfg_sub.add_parser("path", help=t("help.config.path"))
+    cfg_sub.add_parser("show", help=t("help.config.show"))
+    cfg_sub.add_parser("edit", help=t("help.config.edit"))
+    cfg_sub.add_parser("remove", help=t("help.config.remove"))
 
-    db = sub.add_parser("db", help="Gerencia bancos/conexões cadastrados")
+    db = sub.add_parser("db", help=t("help.db"))
     db_sub = db.add_subparsers(dest="db_command")
-    db_sub.add_parser("list", help="Lista bancos cadastrados")
-    add_db = db_sub.add_parser("add", help="Cadastra banco interativamente")
-    add_db.add_argument("tag", nargs="?", help="Tag do banco")
-    edit_db = db_sub.add_parser("edit", help="Edita banco interativamente")
+    db_sub.add_parser("list", help=t("help.db.list"))
+    add_db = db_sub.add_parser("add", help=t("help.db.add"))
+    add_db.add_argument("tag", nargs="?", help=t("help.db.tag"))
+    edit_db = db_sub.add_parser("edit", help=t("help.db.edit"))
     edit_db.add_argument("tag")
-    rm_db = db_sub.add_parser("remove", help="Remove banco")
+    rm_db = db_sub.add_parser("remove", help=t("help.db.remove"))
     rm_db.add_argument("tag")
-    test_db = db_sub.add_parser("test", help="Testa conexão de um banco")
+    test_db = db_sub.add_parser("test", help=t("help.db.test"))
     test_db.add_argument("tag", nargs="?")
-    defaults_db = db_sub.add_parser("set-defaults", help="Define origem/destino padrão")
+    defaults_db = db_sub.add_parser("set-defaults", help=t("help.db.defaults"))
     defaults_db.add_argument("-o", "--origin", required=True)
     defaults_db.add_argument("-d", "--destination", required=True)
 
-    client = sub.add_parser("client", help="Gerencia cliente MariaDB/MySQL portátil")
+    client = sub.add_parser("client", help=t("help.client"))
     client_sub = client.add_subparsers(dest="client_command")
-    client_sub.add_parser("status", help="Mostra clientes disponíveis")
-    client_sub.add_parser("path", help="Mostra pasta do cliente gerenciado")
-    install = client_sub.add_parser("install", help="Instala cliente gerenciado explicitamente")
+    client_sub.add_parser("status", help=t("help.client.status"))
+    client_sub.add_parser("path", help=t("help.client.path"))
+    install = client_sub.add_parser("install", help=t("help.client.install"))
     add_client_install_args(install)
-    client_sub.add_parser("remove", help="Remove cliente gerenciado")
-    update = client_sub.add_parser("update", help="Atualiza cliente gerenciado (alias para install)")
+    client_sub.add_parser("remove", help=t("help.client.remove"))
+    update = client_sub.add_parser("update", help=t("help.client.update"))
     add_client_install_args(update)
 
-    logs = sub.add_parser("logs", help="Gerencia logs")
+    logs = sub.add_parser("logs", help=t("help.logs"))
     logs_sub = logs.add_subparsers(dest="logs_command")
-    logs_sub.add_parser("path", help="Mostra caminho dos logs")
-    tail = logs_sub.add_parser("tail", help="Mostra últimas linhas do log")
-    tail.add_argument("-n", "--lines", type=int, default=40, help="Quantidade de linhas")
-    logs_sub.add_parser("open", help="Abre pasta dos logs")
-    logs_sub.add_parser("clear", help="Limpa logs")
+    logs_sub.add_parser("path", help=t("help.logs.path"))
+    tail = logs_sub.add_parser("tail", help=t("help.logs.tail"))
+    tail.add_argument("-n", "--lines", type=int, default=40, help=t("help.logs.lines"))
+    logs_sub.add_parser("open", help=t("help.logs.open"))
+    logs_sub.add_parser("clear", help=t("help.logs.clear"))
 
-    uninstall = sub.add_parser("uninstall", help="Mostra instruções/atalho de desinstalação")
-    uninstall.add_argument("--all", action="store_true", help="Remove também config, cliente gerenciado e logs")
-    uninstall.add_argument("--keep-config", action="store_true", help="Remove app e mantém config")
+    uninstall = sub.add_parser("uninstall", help=t("help.uninstall"))
+    uninstall.add_argument("--all", action="store_true", help=t("help.uninstall.all"))
+    uninstall.add_argument("--keep-config", action="store_true", help=t("help.uninstall.keep_config"))
     _add_language_arguments(parser)
     return parser
 
@@ -189,9 +201,9 @@ def add_table_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_client_install_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--archive-url", help="URL opcional de um .zip/.tar.gz customizado com binários mariadb/mariadb-dump")
-    parser.add_argument("--sha256", help="SHA256 esperado quando usar --archive-url")
-    parser.add_argument("--yes", action="store_true", help="Não pedir confirmação")
+    parser.add_argument("--archive-url", help=t("help.archive_url"))
+    parser.add_argument("--sha256", help=t("help.sha256"))
+    parser.add_argument("--yes", action="store_true", help=t("help.yes"))
 
 
 def normalize_legacy_args(argv: list[str]) -> list[str]:
@@ -237,16 +249,19 @@ def normalize_legacy_args(argv: list[str]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     argv = normalize_legacy_args(list(argv) if argv is not None else sys.argv[1:])
     override = _language_override(argv)
+    paths = _paths_from_argv(argv)
+    set_language(DEFAULT_LANGUAGE)
     if override:
         set_language(override)
+    elif paths.config_file.exists():
+        try:
+            set_language(load_config(paths).get("language"))
+        except ConfigError:
+            # Keep parser creation resilient; dispatch renders the normal config error.
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     args._language_override = override
-    paths = AppPaths.current()
-    if args.config:
-        cfg_path = Path(args.config).expanduser().resolve()
-        base_dir = cfg_path.parent.parent if cfg_path.parent.name == "config" else cfg_path.parent
-        paths = AppPaths(config_dir=cfg_path.parent, data_dir=base_dir / "data", state_dir=base_dir / "state", cache_dir=base_dir / "cache")
 
     try:
         if args.version:
@@ -803,18 +818,18 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 print_schema_final_sql(plans)
         if not getattr(args, "yes", False):
             if getattr(args, "interactive", False):
-                choice = read_text_or_back("Aplicar plano? [a]plicar/[v]oltar: ")
+                choice = read_text_or_back(t("prompt.apply_choice"))
                 if choice is None or choice.strip().lower() not in {"a", "aplicar", "apply"}:
-                    console.print("Cancelado. Nenhuma alteração foi feita.")
+                    console.print(t("prompt.cancelled_no_changes"))
                     return 0
-                typed = read_text_or_back("Digite APLICAR para executar este plano: ")
+                typed = read_text_or_back(t("prompt.apply_plan"))
                 if typed is None:
-                    console.print("Cancelado. Nenhuma alteração foi feita.")
+                    console.print(t("prompt.cancelled_no_changes"))
                     return 0
             else:
-                typed = input("Digite APLICAR para executar este plano: ").strip()
-            if typed.upper() != "APLICAR":
-                console.print("Cancelado. Nenhuma alteração foi feita.")
+                typed = input(t("prompt.apply_plan")).strip()
+            if typed.upper() != t("prompt.apply_word"):
+                console.print(t("prompt.cancelled_no_changes"))
                 return 1
         for plan in plans:
             report = execute_schema_plan(destination, plan)
@@ -830,9 +845,9 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         keep_backup = bool(getattr(args, "keep_backup", False))
         if not getattr(args, "yes", False):
             keep_backup = input("Deseja manter tabela atual como backup? [s/N]").strip().lower() == "s"
-            typed = input("Digite APLICAR para recriar a tabela: ").strip()
-            if typed.upper() != "APLICAR":
-                console.print("Cancelado. Nenhuma alteração foi feita.")
+            typed = input(t("prompt.apply_recreate")).strip()
+            if typed.upper() != t("prompt.apply_word"):
+                console.print(t("prompt.cancelled_no_changes"))
                 return 1
         for table in tables:
             report = execute_recreate_table(origin, destination, table, keep_backup=keep_backup)
@@ -855,10 +870,10 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
 def print_schema_diff(diff: SchemaDiff) -> None:
     console.print(f"\n[bold cyan]Tabela: {diff.table}[/]")
     if not diff.source_exists:
-        console.print(f"[red]{t('schema.no_table', side='origin' if get_language() == 'en' else 'origem')}[/]")
+        console.print(f"[red]{t('schema.no_table', side=t('schema.origin'))}[/]")
         return
     if not diff.target_exists:
-        console.print(f"[yellow]{t('schema.no_table', side='destination' if get_language() == 'en' else 'destino')}[/]")
+        console.print(f"[yellow]{t('schema.no_table', side=t('schema.destination'))}[/]")
         return
     if diff.is_equal:
         console.print(f"[green]{t('schema.identical')}[/]")
@@ -1302,7 +1317,7 @@ def profile_options(config: dict, *, include_back: bool = True) -> list[MenuOpti
         for tag, profile in config.get("profiles", {}).items()
     ]
     if include_back:
-        options.append(MenuOption(ui("Voltar", "Back"), "back"))
+        options.append(MenuOption(t("menu.back"), "back"))
     return options
 
 
@@ -1318,7 +1333,7 @@ def choose_profile(config: dict, title: str, default: str = "", *, footer: str =
 
 def pause_after_action() -> None:
     if sys.stdin.isatty():
-        input("\nPressione Enter para voltar ao menu...")
+        input(t("prompt.press_enter"))
 
 
 def run_interactive_menu(paths: AppPaths) -> int:
@@ -1431,26 +1446,26 @@ def interactive_language(paths: AppPaths) -> int:
 def format_sync_context(*, origin: str = "", destination: str = "", tables: list[str] | None = None, mode: str = "", step: str = "") -> str:
     lines: list[str] = []
     if origin:
-        lines.append(f"Origem escolhida: {origin}")
+        lines.append(t("menu.context.origin", origin=origin))
     if destination:
-        lines.append(f"Destino escolhido: {destination}")
+        lines.append(t("menu.context.destination", destination=destination))
     if tables:
-        lines.append(f"Tabelas escolhidas: {', '.join(tables)}")
+        lines.append(t("menu.context.tables", tables=", ".join(tables)))
     if mode:
-        lines.append(f"Motor escolhido: {mode}")
+        lines.append(t("menu.context.mode", mode=mode))
     step_text = {
-        "origin": "Escolha o banco de origem",
-        "destination": "Escolha o banco de destino",
-        "tables": "Escolha as tabelas que serão sincronizadas",
-        "mode": "Escolha o motor",
+        "origin": t("menu.step.origin"),
+        "destination": t("menu.step.destination"),
+        "tables": t("menu.step.tables"),
+        "mode": t("menu.step.mode"),
     }.get(step, "")
     if step_text:
         lines.append(step_text)
     return "\n".join(lines)
 
 
-def read_tables_input(prompt: str = "Tabelas: ") -> list[str] | None:
-    value = read_text_or_back(prompt)
+def read_tables_input(prompt: str | None = None) -> list[str] | None:
+    value = read_text_or_back(prompt or t("menu.table_prompt"))
     if value is None:
         return None
     return parse_tables([value])
@@ -1466,7 +1481,7 @@ def interactive_backup(paths: AppPaths) -> int:
     if tables is None:
         return MENU_BACK
     if not tables:
-        console.print(f"[red]{t('error')}[/] {ui('Nenhuma tabela informada.', 'No table was provided.')}")
+        console.print(f"[red]{t('error')}[/] {t('menu.no_table')}")
         return 2
     console.print("Nomes sugeridos dos backups. Pressione Enter para confirmar ou edite o nome.")
     suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1485,7 +1500,7 @@ def interactive_backup(paths: AppPaths) -> int:
 
 def _manual_schema_operation_options(plan: SchemaPlan, selected: set[int]) -> list[MenuOption]:
     symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~"}
-    labels = {"column": "coluna", "index": "índice", "foreign_key": "FK", "table_option": "opção da tabela"}
+    labels = {"column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
     options: list[MenuOption] = []
     for index, operation in enumerate(plan.operations):
         if operation.action == "preserve" or not operation.sql:
@@ -1495,8 +1510,8 @@ def _manual_schema_operation_options(plan: SchemaPlan, selected: set[int]) -> li
         details = "; ".join(operation.details) or group
         options.append(MenuOption(f"{mark} {symbols.get(operation.action, '?')} {labels.get(operation.category, operation.category)} {operation.name}", f"toggle:{index}", f"{group}. {details}"))
     options.extend((
-        MenuOption("Revisar/aplicar selecionadas", "review"),
-        MenuOption(ui("Voltar", "Back"), "back"),
+        MenuOption(t("menu.manual.review"), "review"),
+        MenuOption(t("menu.back"), "back"),
     ))
     return options
 
@@ -1524,11 +1539,11 @@ def interactive_manual_schema_selection(config: dict, origin_tag: str, destinati
         while True:
             options = _manual_schema_operation_options(plan, selected)
             choice = select_option(
-                ui("Seleção manual", "Manual selection") + f" — {plan.table}",
+                t("menu.manual.title") + f" — {plan.table}",
                 options,
                 default_index=cursor_index,
                 console=console,
-                footer=ui("[x] selecionada; [ ] não será aplicada. As operações são agrupadas por ação e categoria.", "[x] selected; [ ] will not be applied. Operations are grouped by action and category."),
+                footer=t("menu.manual.footer"),
             )
             if choice == "back":
                 return MENU_BACK
@@ -1547,9 +1562,9 @@ def interactive_manual_schema_selection(config: dict, origin_tag: str, destinati
         for plan in plans
     ]
     if not any(plan.operations for plan in selected_plans):
-        console.print(f"[yellow]{ui('Nenhuma operação foi selecionada. Nenhuma alteração foi feita.', 'No operations were selected. No changes were made.')}[/]")
+        console.print(f"[yellow]{t('menu.manual.none')}[/]")
         return 0
-    console.print(f"\n[bold cyan]{ui('Revisão das operações selecionadas', 'Review selected operations')}[/]")
+    console.print(f"\n[bold cyan]{t('menu.manual.review_title')}[/]")
     for plan in selected_plans:
         if plan.operations:
             print_schema_plan(plan, show_sql=True)
@@ -1571,16 +1586,16 @@ def interactive_manual_schema_selection(config: dict, origin_tag: str, destinati
 
 def interactive_schema(paths: AppPaths) -> int:
     config = load_config(paths)
-    origin = choose_profile(config, ui("Estrutura das tabelas — modelo/origem", "Table structure — model/origin"), config.get("defaults", {}).get("origin", ""))
+    origin = choose_profile(config, t("menu.schema.origin"), config.get("defaults", {}).get("origin", ""))
     if origin == "back":
         return MENU_BACK
-    destination = choose_profile(config, ui("Estrutura das tabelas — banco que será alterado", "Table structure — database to change"), config.get("defaults", {}).get("destination", ""))
+    destination = choose_profile(config, t("menu.schema.destination"), config.get("defaults", {}).get("destination", ""))
     if destination == "back":
         return MENU_BACK
 
     while True:
         console.print(Panel(
-            ui(f"Modelo: {origin}\nBanco que será alterado: {destination}\nDigite as tabelas para analisar.", f"Model: {origin}\nDatabase to change: {destination}\nEnter tables to analyze."),
+            t("menu.schema.model", origin=origin, destination=destination),
             title=t("menu.schema"),
             border_style="cyan",
         ))
@@ -1588,22 +1603,22 @@ def interactive_schema(paths: AppPaths) -> int:
         if tables is None:
             return MENU_BACK
         if not tables:
-            console.print(f"[red]{t('error')}[/] {ui('Nenhuma tabela informada.', 'No table was provided.')}")
+            console.print(f"[red]{t('error')}[/] {t('menu.no_table')}")
             return 2
 
         while True:
             choice = select_option(
                 t("menu.schema"),
                 [
-                    MenuOption(ui("Ver diferenças", "View differences"), "diff"),
-                    MenuOption(ui("Copiar estrutura", "Copy structure"), "copy", ui("deixa o destino igual à origem; pode alterar e remover extras", "makes destination match origin; may change and remove extras")),
-                    MenuOption(ui("Atualizar preservando extras", "Update while preserving extras"), "update", ui("copia a estrutura da origem, mas não remove extras do destino", "copies origin structure without removing destination extras")),
-                    MenuOption(ui("Escolher manualmente o que aplicar", "Choose what to apply manually"), "manual", ui("modo interativo: escolha colunas, índices e keys após ver o diff", "interactive mode: choose columns, indexes, and keys after viewing the diff")),
-                    MenuOption(ui("Recriar tabela a partir da origem", "Recreate table from origin"), "recreate-table", ui("backup opcional", "optional backup")),
-                    MenuOption(ui("Voltar ao menu principal", "Back to main menu"), "main_menu"),
+                    MenuOption(t("menu.schema.diff"), "diff"),
+                    MenuOption(t("menu.schema.copy"), "copy", t("menu.schema.copy_description")),
+                    MenuOption(t("menu.schema.update"), "update", t("menu.schema.update_description")),
+                    MenuOption(t("menu.schema.manual"), "manual", t("menu.schema.manual_description")),
+                    MenuOption(t("menu.schema.recreate"), "recreate-table", t("menu.schema.recreate_description")),
+                    MenuOption(t("menu.schema.main"), "main_menu"),
                 ],
                 console=console,
-                footer=ui("Pressione T para escolher as tabelas novamente", "Press T to choose tables again"),
+                footer=t("menu.schema.reselect"),
                 hotkeys={"t": "reselect_tables"},
             )
             if choice in {"back", "reselect_tables"}:
@@ -1617,7 +1632,7 @@ def interactive_schema(paths: AppPaths) -> int:
             elif choice == "manual":
                 status = interactive_manual_schema_selection(config, origin, destination, tables)
             elif choice == "recreate-table":
-                console.print(f"[yellow]{ui('ATENÇÃO:', 'WARNING:')}[/] {ui('este modo recria a tabela no destino. Backup é opcional e deve ser feito separadamente se desejado.', 'this mode recreates the destination table. Backup is optional and should be created separately if desired.')}")
+                console.print(f"[yellow]{t('menu.schema.warning')}[/]")
                 status = cmd_schema(paths, argparse.Namespace(schema_command="recreate-table", tables=tables, file=None, origin=origin, destination=destination, yes=False))
             else:
                 continue
@@ -1655,19 +1670,19 @@ def advanced_backup_options() -> list[MenuOption]:
         MenuOption("não", "none", "não cria backup antes de sincronizar"),
         MenuOption("sim, temporário", "temp", "remove o backup se a sincronização concluir com sucesso"),
         MenuOption("sim, manter", "keep", "mantém o backup no banco após sincronizar com sucesso"),
-        MenuOption(ui("Voltar", "Back"), "back"),
+        MenuOption(t("menu.back"), "back"),
     ]
 
 
 def advanced_mode_options(where_clause: str, insert_missing: bool) -> list[MenuOption]:
     if where_clause or insert_missing:
-        return [MenuOption("python", "python", "obrigatório para WHERE/insert-missing nesta versão"), MenuOption(ui("Voltar", "Back"), "back")]
+        return [MenuOption("python", "python", "obrigatório para WHERE/insert-missing nesta versão"), MenuOption(t("menu.back"), "back")]
     return [
         MenuOption("auto", "auto", "recomendado"),
         MenuOption("managed-dump", "managed-dump", "MariaDB gerenciado"),
         MenuOption("system-dump", "system-dump", "cliente do sistema"),
         MenuOption("python", "python", "fallback sem dump"),
-        MenuOption(ui("Voltar", "Back"), "back"),
+        MenuOption(t("menu.back"), "back"),
     ]
 
 
@@ -1681,7 +1696,7 @@ def advanced_menu_options(config: dict, origin: str, destination: str, tables: l
         MenuOption("Quais linhas adicionar", "rows", advanced_rows_text(insert_missing, where_clause)),
         MenuOption("Motor de sincronização", "mode", mode),
         MenuOption("Executar sincronização avançada", "run"),
-        MenuOption(ui("Voltar", "Back"), "back"),
+        MenuOption(t("menu.back"), "back"),
     ]
 
 
@@ -1743,7 +1758,7 @@ def interactive_advanced_sync(paths: AppPaths) -> int:
                 [
                     MenuOption("TODAS", "all", "substitui a tabela inteira ou as linhas encontradas pelo WHERE"),
                     MenuOption("apenas novas da origem", "missing", "mantém existentes e insere só PKs faltantes"),
-                    MenuOption(ui("Voltar", "Back"), "back"),
+                    MenuOption(t("menu.back"), "back"),
                 ],
                 console=console,
             )
@@ -1796,9 +1811,9 @@ def interactive_sync(paths: AppPaths) -> int:
         table_source = select_option(
             "Sincronizando tabelas",
             [
-                MenuOption(f"Usar últimas ({', '.join(last)})", "last"),
-                MenuOption("Digitar tabelas", "manual"),
-                MenuOption(ui("Voltar", "Back"), "back"),
+                MenuOption(t("menu.use_last", tables=", ".join(last)), "last"),
+                MenuOption(t("menu.enter_tables"), "manual"),
+                MenuOption(t("menu.back"), "back"),
             ],
             console=console,
             footer=format_sync_context(origin=origin, destination=destination, step="tables"),
@@ -1830,7 +1845,7 @@ def interactive_db(paths: AppPaths) -> int:
                 MenuOption("Editar banco", "edit"),
                 MenuOption("Testar banco", "test"),
                 MenuOption("Remover banco", "remove"),
-                MenuOption(ui("Voltar", "Back"), "back"),
+                MenuOption(t("menu.back"), "back"),
             ],
             console=console,
         )
@@ -1876,7 +1891,7 @@ def interactive_client(paths: AppPaths) -> int:
                 MenuOption("Status", "status"),
                 MenuOption("Instalar/atualizar MariaDB", "install"),
                 MenuOption("Remover MariaDB", "remove"),
-                MenuOption(ui("Voltar", "Back"), "back"),
+                MenuOption(t("menu.back"), "back"),
             ],
             console=console,
         )
@@ -1899,7 +1914,7 @@ def interactive_logs(paths: AppPaths) -> int:
             MenuOption("Ver últimas linhas", "tail"),
             MenuOption("Abrir pasta", "open"),
             MenuOption("Limpar logs", "clear"),
-            MenuOption(ui("Voltar", "Back"), "back"),
+            MenuOption(t("menu.back"), "back"),
         ],
         console=console,
     )

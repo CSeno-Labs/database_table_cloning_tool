@@ -10,6 +10,8 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.text import Text
 
+from .i18n import t
+
 
 @dataclass(frozen=True)
 class MenuOption:
@@ -139,11 +141,11 @@ def read_key() -> str:
 def menu_renderable(title: str, option_list: list[MenuOption], index: int, footer: str = "", *, compact: bool = False) -> Group:
     lines = [
         Text(title, style="bold"),
-        Text("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n"),
+        Text(t("menu.navigation") + "\n"),
     ]
     start, end = menu_option_window(index, len(option_list))
     if start:
-        lines.append(Text("↑ mais opções acima", style="dim"))
+        lines.append(Text(t("menu.more_above"), style="dim"))
     for idx in range(start, end):
         option = option_list[idx]
         marker = "➤" if idx == index else " "
@@ -154,7 +156,7 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
         if idx < end - 1 and not compact:
             lines.append(Text(""))
     if end < len(option_list):
-        lines.append(Text("↓ mais opções abaixo", style="dim"))
+        lines.append(Text(t("menu.more_below"), style="dim"))
     if footer:
         lines.append(Text(""))
         lines.append(Text(footer, style="dim"))
@@ -163,10 +165,10 @@ def menu_renderable(title: str, option_list: list[MenuOption], index: int, foote
 
 def print_menu(console: Console, title: str, option_list: list[MenuOption], index: int, footer: str = "", *, compact: bool = False) -> None:
     console.print(f"[bold]{title}[/]")
-    console.print("Use ↑/↓ para navegar, Enter para selecionar, Esc/← para voltar. Números também funcionam.\n")
+    console.print(t("menu.navigation") + "\n")
     start, end = menu_option_window(index, len(option_list))
     if start:
-        console.print("[dim]↑ mais opções acima[/]")
+        console.print(f"[dim]{t('menu.more_above')}[/]")
     for idx in range(start, end):
         option = option_list[idx]
         marker = "➤" if idx == index else " "
@@ -177,7 +179,7 @@ def print_menu(console: Console, title: str, option_list: list[MenuOption], inde
         if idx < end - 1 and not compact:
             console.print()
     if end < len(option_list):
-        console.print("[dim]↓ mais opções abaixo[/]")
+        console.print(f"[dim]{t('menu.more_below')}[/]")
     if footer:
         console.print(f"\n[dim]{footer}[/]")
 
@@ -206,8 +208,8 @@ def select_option(
             console.print(f"[{idx}] {option.label}{suffix}")
         if footer:
             console.print(f"\n[dim]{footer}[/]")
-        console.print("[0] Voltar")
-        value = input("Escolha: ").strip()
+        console.print(f"[0] {t('menu.back_numbered')}")
+        value = input(t("menu.choose")).strip()
         if value.lower() in hotkeys:
             return hotkeys[value.lower()]
         if not value:
