@@ -13,7 +13,7 @@ def test_doctor_reports_invalid_json_without_traceback(tmp_path: Path, capsys):
     captured = capsys.readouterr()
     assert code == 2
     assert "Config JSON inválido" in captured.out
-    assert "line 1 column" in captured.out
+    assert "linha 1, coluna" in captured.out
     assert "Traceback" not in captured.out
 
 

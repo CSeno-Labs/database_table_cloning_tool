@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .i18n import t
+
+
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)?$")
 
 
@@ -31,5 +34,5 @@ def parse_tables_file(path: str | Path) -> list[str]:
 
 def quote_identifier(identifier: str) -> str:
     if not identifier or not _IDENTIFIER_RE.match(identifier):
-        raise ValueError(f"Identificador inválido: {identifier!r}")
+        raise ValueError(t("tables.invalid_identifier", identifier=repr(identifier)))
     return ".".join(f"`{part}`" for part in identifier.split("."))

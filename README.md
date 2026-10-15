@@ -66,6 +66,8 @@ O comando usa `uv tool install --reinstall git+https://github.com/CSeno-Labs/dat
 
 No Windows, o atualizador abre uma janela separada e espera o `sync-db.exe` atual encerrar antes de reinstalar. Isso evita erro de `Acesso negado` ao remover a pasta `Scripts` enquanto o próprio comando ainda está rodando.
 
+Ao abrir o menu interativo, o sync-db verifica em segundo plano se a `main` tem uma versão mais nova (no máximo uma vez a cada 24 horas). Se a conexão estiver indisponível, o menu continua normalmente; se a consulta demorar, o aviso pode aparecer na próxima abertura. A verificação não atualiza o programa automaticamente. Instalações editáveis de desenvolvimento não fazem essa consulta; use `git pull` nelas.
+
 ## Instalação a partir do repositório clonado
 
 ```bash

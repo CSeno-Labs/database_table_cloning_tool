@@ -28,7 +28,7 @@ def test_db_add_interactively_saves_profile(monkeypatch, tmp_path: Path, capsys)
     assert main(["--config", str(config), "db", "list"]) == 0
     shown = capsys.readouterr().out
     assert "prod_leitura" in shown
-    assert "source_only" in shown
+    assert "somente" in shown
 
 
 def test_db_add_refuses_existing_tag(monkeypatch, tmp_path: Path, capsys):

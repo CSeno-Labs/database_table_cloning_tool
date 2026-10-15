@@ -14,20 +14,22 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
+from rich.text import Text
 
 from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
 from .db import test_connection
 from .engine import drop_table, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
-from .interactive import MenuOption, read_text_or_back, select_option
+from .interactive import MenuOption, read_key, read_text_or_back, select_option
 from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, get_language, normalize_language, set_language, t
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
 from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
+from .update_check import check_for_update
 
 console = Console()
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.0.2"
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
 
@@ -275,8 +277,8 @@ def main(argv: list[str] | None = None) -> int:
         print_exit_banner()
         return 130
     except ConfigError as exc:
-        console.print(f"[red]ERRO[/] {exc}")
-        console.print("Dica: rode `sync-db config path` e abra o arquivo no editor. Em JSON, barras invertidas precisam ser escapadas como `\\`.")
+        console.print(f"[red]{t('error')}[/] {exc}")
+        console.print(t("config.error_hint"))
         return 2
 
 
@@ -296,6 +298,13 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
     else:
         set_language(load_config(paths).get("language"))
     if not args.command:
+        latest = check_for_update(paths, APP_VERSION)
+        if latest:
+            console.print(f"[yellow]{t('update.available', latest=latest)}[/]")
+            if sys.stdin.isatty():
+                print(t("update.press_key"), end="", flush=True)
+                read_key()
+                print()
         return run_interactive_menu(paths)
     if args.command == "init":
         return cmd_init(paths, quiet=getattr(args, "quiet", False))
@@ -342,8 +351,8 @@ def print_exit_banner() -> None:
 def cmd_init(paths: AppPaths, *, quiet: bool = False) -> int:
     path = ensure_config(paths)
     if not quiet:
-        console.print(f"[green]Config pronto:[/] {path}")
-        console.print("Edite esse arquivo e depois rode: sync-db doctor")
+        console.print(t("init.config_ready", path=path))
+        console.print(t("init.next"))
     return 0
 
 
@@ -365,8 +374,8 @@ def find_running_sync_db_exe() -> str | None:
 def cmd_update(args: argparse.Namespace) -> int:
     uv = shutil.which("uv")
     if not uv:
-        console.print("[red]ERRO[/] uv não encontrado.")
-        console.print("Instale o uv e rode novamente: powershell -ExecutionPolicy Bypass -c \"irm https://astral.sh/uv/install.ps1 | iex\"")
+        console.print(t("update.missing_uv"))
+        console.print(t("update.install_uv"))
         return 1
 
     branch = getattr(args, "branch", "main") or "main"
@@ -389,7 +398,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             except OSError:
                 pass  # não conseguiu renomear, segue sem o truque
 
-    console.print(f"Atualizando sync-db a partir da {branch}...")
+    console.print(t("update.start", branch=branch))
     proc = subprocess.run([uv, "tool", "install", "--reinstall", target], text=True, capture_output=True, check=False)
     if proc.stdout.strip():
         console.print(proc.stdout.strip())
@@ -403,7 +412,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                     os.rename(renamed_to, renamed_from)
             except OSError:
                 pass
-        console.print("[red]ERRO[/] Não foi possível atualizar o sync-db.")
+        console.print(t("update.failed"))
         return proc.returncode or 1
     if proc.stderr.strip():
         console.print(proc.stderr.strip())
@@ -412,25 +421,25 @@ def cmd_update(args: argparse.Namespace) -> int:
             os.remove(renamed_to)
         except OSError:
             pass
-    console.print("[green]Atualização concluída.[/]")
-    console.print("Se o terminal antigo ainda mostrar a versão anterior, feche e abra o PowerShell/terminal novamente.")
+    console.print(t("update.done"))
+    console.print(t("update.restart"))
     return 0
 
 
 def cmd_doctor(paths: AppPaths) -> int:
     path = ensure_config(paths)
     config = load_config(paths)
-    console.print(Panel.fit(f"[bold]Config[/]\n{path}", title="sync-db doctor", border_style="green"))
+    console.print(Panel.fit(f"[bold]{t('doctor.header.config')}[/]\n{path}", title=t("doctor.title"), border_style="green"))
 
     managed = find_managed_client(paths, config["client"].get("vendor", "mariadb"))
     system = find_system_client(config["client"].get("vendor", "mariadb"))
     clients_table = Table(title=t("doctor.clients.title"))
     clients_table.add_column(t("status.item"))
-    clients_table.add_column("Status")
+    clients_table.add_column(t("doctor.column.status"))
     clients_table.add_column(t("status.details"))
-    clients_table.add_row(t("status.managed_client"), "OK" if managed else "WARN", managed.describe() if managed else t("status.install_command"))
-    clients_table.add_row(t("status.system_client"), "OK" if system else "WARN", system.describe() if system else t("status.not_found_path"))
-    clients_table.add_row(t("status.python_engine"), "OK", t("status.available"))
+    clients_table.add_row(t("status.managed_client"), t("status.ok") if managed else t("status.warn"), managed.describe() if managed else t("status.install_command"))
+    clients_table.add_row(t("status.system_client"), t("status.ok") if system else t("status.warn"), system.describe() if system else t("status.not_found_path"))
+    clients_table.add_row(t("status.python_engine"), t("status.ok"), t("status.available"))
     resolved = resolve_client(paths, config["client"].get("mode", "auto"), config["client"].get("preferred_source", "managed"), config["client"].get("vendor", "mariadb"))
     clients_table.add_row(t("status.recommended_engine"), resolved.kind, resolved.reason)
     console.print(clients_table)
@@ -438,20 +447,20 @@ def cmd_doctor(paths: AppPaths) -> int:
     failed = False
     profiles = config.get("profiles", {})
     conn_table = Table(title=t("doctor.connections.title"))
-    conn_table.add_column("Tag")
+    conn_table.add_column(t("doctor.column.tag"))
     conn_table.add_column(t("doctor.name"))
-    conn_table.add_column("Host")
-    conn_table.add_column("Database")
-    conn_table.add_column("Status")
-    conn_table.add_column(t("doctor.version_message"))
+    conn_table.add_column(t("doctor.column.host"))
+    conn_table.add_column(t("doctor.column.database"))
+    conn_table.add_column(t("doctor.column.status"))
+    conn_table.add_column(t("doctor.column.message"))
     if not profiles:
-        console.print(f"[yellow]WARN[/] {t('doctor.no_databases')}")
+        console.print(f"[yellow]{t('status.warn')}[/] {t('doctor.no_databases')}")
     for tag, db_cfg in profiles.items():
         if not db_cfg.get("host") or not db_cfg.get("database") or not db_cfg.get("user"):
-            conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), "WARN", t("status.incomplete_connection"))
+            conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), t("status.warn"), t("status.incomplete_connection"))
             continue
         ok, msg = test_connection(db_cfg)
-        conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), "OK" if ok else "ERRO", msg)
+        conn_table.add_row(tag, db_cfg.get("label", ""), db_cfg.get("host", ""), db_cfg.get("database", ""), t("status.ok") if ok else t("status.error"), msg)
         failed = failed or not ok
     console.print(conn_table)
     return 1 if failed else 0
@@ -501,25 +510,25 @@ def cleanup_temporary_backups(runtime_config: dict, backup_mode: str, results: l
         if result.ok and result.backup_table:
             try:
                 drop_table(destino, result.backup_table)
-                result.message = (result.message + " " if result.message else "") + "backup temporário removido"
+                result.message = (result.message + " " if result.message else "") + t("cleanup.backup_removed")
                 result.backup_table = None
             except Exception as exc:  # noqa: BLE001
                 result.ok = False
                 result.stage = "cleanup_backup"
-                result.message = f"Sync concluiu, mas falhou ao remover backup temporário {result.backup_table}: {exc}"
+                result.message = t("cleanup.backup_failed", backup=result.backup_table, error=exc)
 
 
 def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     config = load_config(paths)
     tables = read_last_tables(paths, config) if getattr(args, "last", False) else collect_tables(args, config)
     if not tables:
-        console.print("[red]ERRO[/] Nenhuma tabela informada. Use -t, -f ou --last.")
+        console.print(f"[red]{t('error')}[/] {t('sync.no_tables')}")
         return 2
 
     try:
         runtime_config = sync_runtime_config(config, getattr(args, "origin", None), getattr(args, "destination", None))
     except ValueError as exc:
-        console.print(f"[red]ERRO[/] {exc}")
+        console.print(f"[red]{t('error')}[/] {exc}")
         return 2
     backup_mode = getattr(args, "backup", None) or "none"
     runtime_config.setdefault("sync", {})["backup_before_replace"] = backup_mode in {"temp", "keep"}
@@ -527,7 +536,7 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     insert_missing = bool(getattr(args, "insert_missing", False))
     dry_run = bool(getattr(args, "dry_run", False))
     advanced = bool(where_clause or insert_missing)
-    console.print(f"Fluxo: [bold]{runtime_config['origem']['alias']}[/] → [bold]{runtime_config['destino']['alias']}[/]")
+    console.print(t("sync.flow", origin=f"[bold]{runtime_config['origem']['alias']}[/]", destination=f"[bold]{runtime_config['destino']['alias']}[/]"))
     if not dry_run:
         save_last_tables(paths, config, tables)
 
@@ -537,19 +546,19 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     mode = args.mode or config.get("client", {}).get("mode", "auto")
     resolved = resolve_client(paths, mode, config["client"].get("preferred_source", "managed"), config["client"].get("vendor", "mariadb"))
     if resolved.kind == "missing":
-        console.print(f"[red]ERRO[/] {resolved.reason}")
-        console.print("Opções: sync-db client install | instalar cliente no sistema | --mode python")
+        console.print(f"[red]{t('error')}[/] {resolved.reason}")
+        console.print(t("sync.missing_client"))
         return 1
-    console.print(f"Motor: [bold]{resolved.kind}[/] — {resolved.reason}")
+    console.print(t("sync.engine", engine=f"[bold]{resolved.kind}[/]", reason=resolved.reason))
     if dry_run:
-        console.print("[yellow]DRY-RUN[/] Nenhuma alteração será feita no destino.")
-        preview = Table(title="Prévia da sincronização")
-        preview.add_column("Tabela")
-        preview.add_column("Ação")
-        preview.add_column("Motor")
-        preview.add_column("Backup")
+        console.print(t("sync.dry_run"))
+        preview = Table(title=t("sync.preview"))
+        preview.add_column(t("sync.column.table"))
+        preview.add_column(t("sync.column.action"))
+        preview.add_column(t("sync.column.engine"))
+        preview.add_column(t("sync.column.backup"))
         for table_name in tables:
-            preview.add_row(table_name, "substituir tabela inteira", resolved.kind, backup_mode)
+            preview.add_row(table_name, t("sync.action.replace_all"), resolved.kind, backup_mode)
         console.print(preview)
         write_sync_log(paths, runtime_config, tables, resolved.kind, [], sync_type="dry_run")
         return 0
@@ -559,16 +568,18 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     with progress_cm as progress:
         task_id = progress.add_task(t("menu.sync.title"), total=len(tables)) if progress else None
         for table in tables:
-            console.print(f"\n[bold cyan]Sincronizando {table}[/]")
+            console.print(f"\n[bold cyan]{t('sync.progress', table=table)}[/]")
             if progress and task_id is not None:
-                progress.update(task_id, description=f"Sincronizando {table}")
+                progress.update(task_id, description=t("sync.progress", table=table))
                 if resolved.kind == "dump" and resolved.client:
                     result = run_dump_sync(runtime_config, table, resolved.client, paths)
                 else:
                     result = run_python_sync(runtime_config, table)
+                if not result.ok:
+                    progress.update(task_id, description=t("sync.failed_progress", table=table))
                 progress.advance(task_id)
             else:
-                with console.status(f"Carregando tabela {table}...", spinner="dots"):
+                with console.status(t("sync.loading", table=table), spinner="dots"):
                     if resolved.kind == "dump" and resolved.client:
                         result = run_dump_sync(runtime_config, table, resolved.client, paths)
                     else:
@@ -576,68 +587,78 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
             results.append(result)
             if result.ok:
                 extra = f" backup={result.backup_table}" if result.backup_table else ""
-                console.print(f"[green]OK[/] {table} ({result.engine}) rows={result.rows}{extra}")
-            else:
-                stage = f" etapa={result.stage}" if result.stage else ""
-                console.print(f"[red]FALHOU[/] {table}{stage}: {result.message}")
+                console.print(t("sync.success", table=table, engine=result.engine, rows="" if result.rows is None else result.rows, extra=extra))
 
     cleanup_temporary_backups(runtime_config, backup_mode, results)
 
-    table = Table(title="Resumo")
-    table.add_column("Tabela")
-    table.add_column("Status")
-    table.add_column("Engine")
-    table.add_column("Etapa")
-    table.add_column("Linhas")
-    table.add_column("Backup")
-    for result in results:
-        table.add_row(result.table, "OK" if result.ok else "FALHOU", result.engine, result.stage or "", "" if result.rows is None else str(result.rows), result.backup_table or "")
-    console.print(table)
+    print_sync_summary(results)
     write_sync_log(paths, runtime_config, tables, resolved.kind, results)
+    print_sync_errors(results, paths.log_file)
     return 0 if all(r.ok for r in results) else 1
 
 
+def _sync_error_detail(result) -> str:
+    message = (result.message or t("sync.error.no_detail")).strip()
+    prefix = t("engine.stage_failed_prefix", stage=result.stage, table=result.table)
+    if message.startswith(prefix):
+        return message[len(prefix):]
+    return message
+
+
+def print_sync_errors(results: list, log_file: Path) -> None:
+    failures = [result for result in results if not result.ok]
+    if not failures:
+        return
+
+    console.print(f"\n[bold red]{t('sync.errors.title')}[/]")
+    for failure in failures:
+        detail = _sync_error_detail(failure)
+        body = Text(f"{t('sync.stage', stage=failure.stage or 'unknown')}\n{t('sync.error', detail=detail)}")
+        console.print(Panel(body, title=t("sync.failed_table", table=failure.table), border_style="red", expand=True))
+    console.print(t("sync.log_path", path=log_file))
+
+
 def print_sync_summary(results: list) -> None:
-    table = Table(title="Resumo")
-    table.add_column("Tabela")
-    table.add_column("Status")
-    table.add_column("Engine")
-    table.add_column("Etapa")
-    table.add_column("Linhas")
-    table.add_column("Backup")
+    table = Table(title=t("sync.summary"))
+    table.add_column(t("sync.column.table"))
+    table.add_column(t("sync.column.status"))
+    table.add_column(t("sync.column.engine"))
+    table.add_column(t("sync.column.stage"))
+    table.add_column(t("sync.column.rows"))
+    table.add_column(t("sync.column.backup"))
     for result in results:
-        table.add_row(result.table, "OK" if result.ok else "FALHOU", result.engine, result.stage or "", "" if result.rows is None else str(result.rows), result.backup_table or "")
+        table.add_row(result.table, t("ok") if result.ok else t("failed"), result.engine, result.stage or "", "" if result.rows is None else str(result.rows), result.backup_table or "")
     console.print(table)
 
 
 def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], where_clause: str, insert_missing: bool, backup_mode: str, *, yes: bool = False, dry_run: bool = False) -> int:
     sync_type = "where_insert_missing" if where_clause and insert_missing else "where_replace" if where_clause else "insert_missing"
-    console.print(f"Motor: [bold]python/advanced[/] — sincronização avançada usa Python nesta versão.")
+    console.print(t("advanced.engine_notice"))
     if where_clause:
-        console.print("[yellow]Atenção:[/] o mesmo WHERE será validado e aplicado em todas as tabelas selecionadas.")
+        console.print(t("advanced.warning.where"))
     if insert_missing and len(tables) > 1:
-        console.print("[yellow]Atenção:[/] as tabelas serão processadas na ordem informada; dependências/FKs não são ordenadas automaticamente.")
+        console.print(t("advanced.warning.order"))
 
     preflight = preflight_advanced_sync(runtime_config, tables, where_clause, insert_missing)
     failures = [result for result in preflight if not result.ok]
     if failures:
-        console.print("[red]ERRO[/] A condição/estrutura não é válida para todas as tabelas.")
+        console.print(t("advanced.preflight.invalid"))
         for failure in failures:
-            console.print(f"[red]FALHOU[/] {failure.table} etapa={failure.stage}: {failure.message}")
-        console.print("Nenhuma tabela foi sincronizada.")
+            console.print(t("advanced.preflight.failed", table=failure.table, stage=failure.stage, message=failure.message))
+        console.print(t("advanced.preflight.none"))
         write_sync_log(paths, runtime_config, tables, "python/advanced", preflight, sync_type=sync_type, where_clause=where_clause)
         return 2
 
-    preview = Table(title="Prévia da sincronização avançada")
-    preview.add_column("Tabela")
-    preview.add_column("PK")
-    preview.add_column("Linhas na origem")
+    preview = Table(title=t("advanced.preview"))
+    preview.add_column(t("sync.column.table"))
+    preview.add_column(t("advanced.column.pk"))
+    preview.add_column(t("advanced.column.origin_rows"))
     if insert_missing:
-        preview.add_column("Já existentes no destino")
-        preview.add_column("Novas no destino")
+        preview.add_column(t("advanced.column.existing_destination"))
+        preview.add_column(t("advanced.column.new_destination"))
     elif where_clause:
-        preview.add_column("Afetadas no destino")
-        preview.add_column("Inseridas após substituir")
+        preview.add_column(t("advanced.column.affected_destination"))
+        preview.add_column(t("advanced.column.inserted_after_replace"))
     for result in preflight:
         row = [result.table, ", ".join(result.primary_key or []), "" if result.origin_matched_rows is None else str(result.origin_matched_rows)]
         if insert_missing:
@@ -653,16 +674,16 @@ def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], 
         preview.add_row(*row)
     console.print(preview)
     if dry_run:
-        console.print("[yellow]DRY-RUN[/] Nenhuma alteração será feita no destino.")
+        console.print(t("sync.dry_run"))
         write_sync_log(paths, runtime_config, tables, "python/advanced", preflight, sync_type=f"dry_run_{sync_type}", where_clause=where_clause)
         return 0
     needs_risk_confirmation = len(tables) > 1 and bool(where_clause or insert_missing)
     if needs_risk_confirmation and not yes:
         if not sys.stdin.isatty():
-            console.print("[red]ERRO[/] Sincronização avançada com várias tabelas exige confirmação. Use -y/--yes para executar sem prompt.")
+            console.print(t("advanced.confirm_required"))
             return 2
-        if not confirm("Continuar com a sincronização avançada?"):
-            console.print("Cancelado.")
+        if not confirm(t("advanced.confirm")):
+            console.print(t("cancelled"))
             return 1
 
     results = []
@@ -670,23 +691,24 @@ def cmd_sync_advanced(paths: AppPaths, runtime_config: dict, tables: list[str], 
     with progress_cm as progress:
         task_id = progress.add_task(t("menu.sync.title"), total=len(tables)) if progress else None
         for table in tables:
-            console.print(f"\n[bold cyan]Sincronizando {table}[/]")
+            console.print(f"\n[bold cyan]{t('sync.progress', table=table)}[/]")
             if progress and task_id is not None:
-                progress.update(task_id, description=f"Sincronizando {table}")
+                progress.update(task_id, description=t("sync.progress", table=table))
                 result = run_python_advanced_sync(runtime_config, table, where_clause=where_clause, insert_missing=insert_missing)
+                if not result.ok:
+                    progress.update(task_id, description=t("sync.failed_progress", table=table))
                 progress.advance(task_id)
             else:
-                with console.status(f"Sincronização avançada de {table}...", spinner="dots"):
+                with console.status(t("sync.loading", table=table), spinner="dots"):
                     result = run_python_advanced_sync(runtime_config, table, where_clause=where_clause, insert_missing=insert_missing)
             results.append(result)
             if result.ok:
-                console.print(f"[green]OK[/] {table} ({result.sync_type}) inseridas={result.inserted_rows or 0} ignoradas={result.skipped_existing_rows or 0} removidas={result.deleted_rows or 0}")
-            else:
-                console.print(f"[red]FALHOU[/] {table} etapa={result.stage}: {result.message}")
+                console.print(t("advanced.success", table=table, sync_type=result.sync_type, inserted=result.inserted_rows or 0, skipped=result.skipped_existing_rows or 0, deleted=result.deleted_rows or 0))
 
     cleanup_temporary_backups(runtime_config, backup_mode, results)
     print_sync_summary(results)
     write_sync_log(paths, runtime_config, tables, "python/advanced", results, sync_type=sync_type, where_clause=where_clause)
+    print_sync_errors(results, paths.log_file)
     return 0 if all(result.ok for result in results) else 1
 
 
@@ -694,33 +716,33 @@ def cmd_backup(paths: AppPaths, args: argparse.Namespace) -> int:
     config = load_config(paths)
     tables = collect_tables(args, config)
     if not tables:
-        console.print("[red]ERRO[/] Nenhuma tabela informada. Use -t ou -f.")
+        console.print(f"[red]{t('error')}[/] {t('sync.no_tables_basic')}")
         return 2
     tag = getattr(args, "destination", None) or config.get("defaults", {}).get("destination")
     if tag not in config.get("profiles", {}):
-        console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+        console.print(f"[red]{t('error')}[/] {t('db.not_found', tag=tag)}")
         return 2
     db_config = dict(config["profiles"][tag])
     db_config["alias"] = tag
     suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
     results = []
-    console.print(f"Banco: [bold]{tag}[/]")
+    console.print(t("backup.database", tag=tag))
     for table in tables:
         suggested = suggested_backup_name(table, suffix)
-        backup_name = suggested if getattr(args, "yes", False) else ask(f"Nome do backup para {table}", suggested)
-        with console.status(f"Criando backup {backup_name}...", spinner="dots"):
+        backup_name = suggested if getattr(args, "yes", False) else ask(t("backup.ask_name", table=table), suggested)
+        with console.status(t("backup.creating", name=backup_name), spinner="dots"):
             result = run_table_backup(db_config, table, backup_name)
         results.append(result)
         if result.ok:
-            console.print(f"[green]OK[/] {table} → {result.backup_table}")
+            console.print(t("backup.success", table=table, backup=result.backup_table))
         else:
-            console.print(f"[red]FALHOU[/] {table}: {result.message}")
-    table_out = Table(title="Backups")
-    table_out.add_column("Tabela")
-    table_out.add_column("Status")
-    table_out.add_column("Backup")
+            console.print(t("backup.failed", table=table, message=result.message))
+    table_out = Table(title=t("backup.title"))
+    table_out.add_column(t("backup.column.table"))
+    table_out.add_column(t("backup.column.status"))
+    table_out.add_column(t("backup.column.name"))
     for result in results:
-        table_out.add_row(result.table, "OK" if result.ok else "FALHOU", result.backup_table or "")
+        table_out.add_row(result.table, t("ok") if result.ok else t("failed"), result.backup_table or "")
     console.print(table_out)
     return 0 if all(result.ok for result in results) else 1
 
@@ -730,24 +752,24 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
     try:
         action = normalize_schema_action(getattr(args, "plan_action", None) if sub == "plan" else sub)
     except ValueError as exc:
-        console.print(f"[red]ERRO[/] {exc}")
+        console.print(f"[red]{t('error')}[/] {exc}")
         return 2
     config = load_config(paths)
     tables = collect_tables(args, config)
     if not tables:
-        console.print("[red]ERRO[/] Nenhuma tabela informada. Use -t ou -f.")
+        console.print(f"[red]{t('error')}[/] {t('sync.no_tables_basic')}")
         return 2
     try:
         origin, destination = resolve_profile_pair(config, getattr(args, "origin", None), getattr(args, "destination", None))
     except ValueError as exc:
-        console.print(f"[red]ERRO[/] {exc}")
+        console.print(f"[red]{t('error')}[/] {exc}")
         return 2
 
     if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not getattr(args, "interactive", False) and not sys.stdin.isatty():
-        console.print("[red]ERRO[/] schema copy/update em modo não interativo exige -y/--yes.")
+        console.print(f"[red]{t('error')}[/] {t('schema.noninteractive_copy')}")
         return 2
     if action == SchemaAction.RECREATE_TABLE and not getattr(args, "yes", False) and not sys.stdin.isatty():
-        console.print("[red]ERRO[/] schema recreate-table em modo não interativo exige -y/--yes.")
+        console.print(f"[red]{t('error')}[/] {t('schema.noninteractive_recreate')}")
         return 2
 
     sql_only = bool(getattr(args, "sql_only", False))
@@ -763,7 +785,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 source_schema, target_schema = inspect_schema_pair(origin, destination, table)
                 results.append((compare_schema(source_schema, target_schema), source_schema, target_schema))
             except Exception as exc:  # noqa: BLE001
-                console.print(f"[red]FALHOU[/] {table}: {exc}")
+                console.print(t("schema.failed", table=table, message=exc))
                 return 1
         for diff, source_schema, target_schema in results:
             print_schema_diff(diff)
@@ -778,20 +800,20 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 source_schema, target_schema = inspect_schema_pair(origin, destination, table)
                 plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action, source=source_schema, target=target_schema))
             except Exception as exc:  # noqa: BLE001
-                console.print(f"[red]FALHOU[/] {table}: {exc}")
+                console.print(t("schema.failed", table=table, message=exc))
                 return 1
         save_path = getattr(args, "save", None)
         if save_path:
             output_path = Path(save_path).expanduser()
             if output_path.exists():
-                console.print(f"[red]ERRO[/] Arquivo já existe: {output_path}. Escolha outro nome para não sobrescrever.")
+                console.print(f"[red]{t('error')}[/] {t('schema.file_exists', path=output_path)}")
                 return 2
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(
                 render_schema_plan_sql_file(plans, origin=origin["alias"], destination=destination["alias"], include_final_sql=bool(getattr(args, "sql", False)), show_item_sql=not bool(getattr(args, "no_sql", False)), sql_only=sql_only),
                 encoding="utf-8",
             )
-            console.print(f"[green]Plano salvo:[/] {output_path}")
+            console.print(t("schema.saved", path=output_path))
             return 0
         if sql_only:
             print_schema_final_sql(plans, heading=False)
@@ -810,7 +832,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
                 source_schema, target_schema = inspect_schema_pair(origin, destination, table)
                 plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action, source=source_schema, target=target_schema))
             except Exception as exc:  # noqa: BLE001
-                console.print(f"[red]FALHOU[/] {table}: {exc}")
+                console.print(t("schema.failed", table=table, message=exc))
                 return 1
         if sql_only:
             print_schema_final_sql(plans, heading=False)
@@ -837,17 +859,17 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         for plan in plans:
             report = execute_schema_plan(destination, plan)
             if report.ok:
-                console.print(f"[green]OK[/] {plan.table}: {len(report.applied)} SQL aplicado(s).")
+                console.print(t("schema.apply.success", table=plan.table, count=len(report.applied)))
             else:
-                console.print(f"[red]FALHOU[/] {plan.table}: após {len(report.applied)} SQL aplicado(s), falhou: {report.failed}")
-                console.print(f"[red]ERRO[/] {report.error}")
+                console.print(t("schema.apply.failed", table=plan.table, count=len(report.applied), failed=report.failed))
+                console.print(t("schema.apply.error", error=report.error))
                 return 1
         return 0
 
     if action == SchemaAction.RECREATE_TABLE:
         keep_backup = bool(getattr(args, "keep_backup", False))
         if not getattr(args, "yes", False):
-            keep_backup = input("Deseja manter tabela atual como backup? [s/N]").strip().lower() == "s"
+            keep_backup = confirm_default(t("prompt.keep_backup_question"), False)
             typed = input(t("prompt.apply_recreate")).strip()
             if typed.upper() != t("prompt.apply_word"):
                 console.print(t("prompt.cancelled_no_changes"))
@@ -855,23 +877,23 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         for table in tables:
             report = execute_recreate_table(origin, destination, table, keep_backup=keep_backup)
             if report.ok:
-                backup_text = f" Backup mantido: {report.backup_table}." if report.backup_table else " Tabela anterior removida após a troca segura."
-                console.print(f"[green]OK[/] {table}: recriada com a estrutura de {origin['alias']}.{backup_text}")
+                backup_text = t("schema.backup.kept_text", backup=report.backup_table) if report.backup_table else t("schema.backup.removed_text")
+                console.print(t("schema.recreate.success", table=table, origin=origin["alias"], backup_text=backup_text))
             else:
-                console.print(f"[red]FALHOU[/] {table}: falhou em {report.failed}")
-                console.print(f"[red]ERRO[/] {report.error}")
+                console.print(t("schema.recreate.failed", table=table, failed=report.failed))
+                console.print(t("schema.apply.error", error=report.error))
                 if report.backup_table:
-                    console.print(f"[yellow]A tabela anterior foi preservada como backup: {report.backup_table}.[/]")
+                    console.print(t("schema.backup.preserved", backup=report.backup_table))
                 return 1
         return 0
 
-    console.print(f"Ação de estrutura: {describe_schema_action(action)}")
-    console.print(f"[yellow]schema {action.value}[/] ainda não aplica alterações. Rode `sync-db schema plan {action.value}` para revisar o plano.")
+    console.print(t("schema.action_header", action=t(f"doctor.action_description.{action.value}")))
+    console.print(t("schema.plan_hint", action=action.value))
     return 0
 
 
 def print_schema_diff(diff: SchemaDiff) -> None:
-    console.print(f"\n[bold cyan]Tabela: {diff.table}[/]")
+    console.print(f"\n[bold cyan]{t('schema.table_header', table=diff.table)}[/]")
     if not diff.source_exists:
         console.print(f"[red]{t('schema.no_table', side=t('schema.origin'))}[/]")
         return
@@ -901,14 +923,14 @@ def print_schema_diff(diff: SchemaDiff) -> None:
         preview = diff.column_changes[:12]
         details = ", ".join(f"{name} ({'/'.join(reasons)})" for name, reasons in preview)
         suffix = f"; +{len(diff.column_changes) - len(preview)}" if len(diff.column_changes) > len(preview) else ""
-        console.print(f"[dim]Motivos das diferenças de coluna: {details}{suffix}[/]")
+        console.print(t("schema.diff.column_reasons", details=details, suffix=suffix))
 
 
 def print_schema_timings(source_label: str, source_timings: tuple[tuple[str, float], ...], target_label: str, target_timings: tuple[tuple[str, float], ...]) -> None:
     def text(label: str, timings: tuple[tuple[str, float], ...]) -> str:
         return f"{label}: " + ", ".join(f"{name}={seconds:.2f}s" for name, seconds in timings)
 
-    console.print(f"[dim]Tempos de leitura — {text(source_label, source_timings)} | {text(target_label, target_timings)}[/]")
+    console.print(t("schema.read_timings", details=f"{text(source_label, source_timings)} | {text(target_label, target_timings)}"))
 
 
 def render_schema_plan_sql_file(plans: list[SchemaPlan], *, origin: str, destination: str, include_final_sql: bool = False, show_item_sql: bool = True, sql_only: bool = False) -> str:
@@ -920,7 +942,7 @@ def render_schema_plan_sql_file(plans: list[SchemaPlan], *, origin: str, destina
     labels = {"column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
     sections = ((t("schema.add"), {"add"}), (t("schema.modify"), {"modify", "replace"}), (t("schema.move"), {"move"}), (t("schema.drop"), {"drop"}), (t("schema.preserve"), {"preserve"}))
     categories = (("column", t("schema.columns")), ("index", t("schema.indexes")), ("foreign_key", t("schema.foreign_keys")), ("table_option", t("schema.table_options")))
-    lines = ["-- sync-db schema plan", f"-- Origem: {origin}", f"-- Destino: {destination}"]
+    lines = [t("schema.sql.heading"), t("schema.sql.origin", origin=origin), t("schema.sql.destination", destination=destination)]
     for plan in plans:
         lines.extend(("", f"-- {t('schema.plan', table=plan.table, action=plan.action.value)}"))
         for title, actions in sections:
@@ -1014,6 +1036,7 @@ def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], eng
                 "engine": result.engine,
                 "rows": result.rows,
                 "message": result.message,
+                "details": getattr(result, "details", ""),
                 "stage": result.stage,
                 "backup_table": result.backup_table,
                 "sync_type": getattr(result, "sync_type", "full_replace"),
@@ -1034,7 +1057,7 @@ def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], eng
 def cmd_tables(args: argparse.Namespace) -> int:
     tables = collect_tables(args)
     if not tables:
-        console.print("[red]ERRO[/] Nenhuma tabela informada. Use `sync-db tables -t tabela` ou `sync-db tables -f tabelas.csv`.")
+        console.print(f"[red]{t('error')}[/] {t('tables.none')}")
         return 2
     for i, table in enumerate(tables, 1):
         console.print(f"{i}. {table}")
@@ -1057,7 +1080,7 @@ def choose_editor(os_name: str | None = None) -> str:
 def open_editor(editor: str, path: Path, os_name: str | None = None) -> int:
     if (os_name or os.name) == "nt":
         subprocess.Popen([editor, str(path)])
-        console.print(f"Editor aberto: {path}")
+        console.print(t("config.editor_open", path=path))
         return 0
     return subprocess.call([editor, str(path)])
 
@@ -1074,9 +1097,9 @@ def cmd_config(paths: AppPaths, args: argparse.Namespace) -> int:
         return open_editor(editor, path)
     elif sub == "remove":
         path = paths.config_file
-        if path.exists() and confirm(f"Remover config {path}?"):
+        if path.exists() and confirm(t("config.remove_confirm", path=path)):
             path.unlink()
-            console.print("[green]Config removido.[/]")
+            console.print(t("config.removed"))
     return 0
 
 
@@ -1092,60 +1115,60 @@ def cmd_db(paths: AppPaths, args: argparse.Namespace) -> int:
     if sub == "remove":
         tag = args.tag
         if tag not in config.get("profiles", {}):
-            console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+            console.print(f"[red]{t('error')}[/] {t('db.not_found', tag=tag)}")
             return 2
-        if confirm(f"Remover banco {tag}?"):
+        if confirm(t("db.remove_confirm", tag=tag)):
             config["profiles"].pop(tag)
             for key in ("origin", "destination"):
                 if config.get("defaults", {}).get(key) == tag:
                     config["defaults"][key] = ""
             save_config(config, paths)
-            console.print(f"[green]Banco removido:[/] {tag}")
+            console.print(t("db.removed", tag=tag))
         return 0
     if sub == "test":
         tag = args.tag or config.get("defaults", {}).get("origin")
         if tag not in config.get("profiles", {}):
-            console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+            console.print(f"[red]{t('error')}[/] {t('db.not_found', tag=tag)}")
             return 2
         ok, msg = test_connection(config["profiles"][tag])
         if ok:
-            console.print(f"[green]OK[/] {tag}: MySQL/MariaDB {msg}")
+            console.print(t("db.test_ok", tag=tag, message=msg))
             return 0
-        console.print(f"[red]ERRO[/] {tag}: {msg}")
+        console.print(t("db.test_error", tag=tag, message=msg))
         return 1
     if sub == "set-defaults":
         try:
             resolve_profile_pair(config, args.origin, args.destination)
         except ValueError as exc:
-            console.print(f"[red]ERRO[/] {exc}")
+            console.print(f"[red]{t('error')}[/] {exc}")
             return 2
         config.setdefault("defaults", {})["origin"] = args.origin
         config.setdefault("defaults", {})["destination"] = args.destination
         save_config(config, paths)
-        console.print(f"Origem padrão: {args.origin}")
-        console.print(f"Destino padrão: {args.destination}")
+        console.print(t("db.default_origin_saved", tag=args.origin))
+        console.print(t("db.default_destination_saved", tag=args.destination))
         return 0
     return cmd_db_list(config)
 
 
 def cmd_db_list(config: dict, *, show_numbers: bool = False) -> int:
-    table = Table(title="Bancos cadastrados")
+    table = Table(title=t("db.list.title"))
     if show_numbers:
         table.add_column("#")
-    table.add_column("Tag")
-    table.add_column("Label")
-    table.add_column("Host")
-    table.add_column("Database")
-    table.add_column("Uso")
+    table.add_column(t("db.column.tag"))
+    table.add_column(t("db.column.label"))
+    table.add_column(t("db.column.host"))
+    table.add_column(t("db.column.database"))
+    table.add_column(t("db.column.usage"))
     defaults = config.get("defaults", {})
     for index, (tag, profile) in enumerate(config.get("profiles", {}).items(), 1):
         marks = []
         if defaults.get("origin") == tag:
-            marks.append("origem padrão")
+            marks.append(t("db.default_origin"))
         if defaults.get("destination") == tag:
-            marks.append("destino padrão")
+            marks.append(t("db.default_destination"))
         if not profile.get("allow_as_destination", True):
-            marks.append("source_only")
+            marks.append(t("db.source_only"))
         row = [tag, profile.get("label", ""), profile.get("host", ""), profile.get("database", ""), ", ".join(marks)]
         if show_numbers:
             row.insert(0, str(index))
@@ -1157,32 +1180,32 @@ def cmd_db_list(config: dict, *, show_numbers: bool = False) -> int:
 def cmd_db_add(paths: AppPaths, config: dict, tag: str | None, *, editing: bool = False) -> int:
     profiles = config.setdefault("profiles", {})
     if not tag:
-        tag = profile_tag(input("Apelido curto do banco (ex: prod, local, homolog): "))
+        tag = profile_tag(input(t("db.tag_prompt")))
     tag = profile_tag(tag)
     current = profiles.get(tag, {}) if editing else {}
     if editing and tag not in profiles:
-        console.print(f"[red]ERRO[/] Banco não encontrado: {tag}")
+        console.print(f"[red]{t('error')}[/] {t('db.not_found', tag=tag)}")
         return 2
     if not editing and tag in profiles:
-        console.print(f"[red]ERRO[/] Banco {tag} já existe. Use `sync-db db edit {tag}` para alterar.")
+        console.print(f"[red]{t('error')}[/] {t('db.exists', tag=tag)}")
         return 2
     profile = {
-        "label": ask("Rótulo amigável", current.get("label", tag)),
-        "host": ask("Host", current.get("host", "")),
-        "port": int(ask("Porta", str(current.get("port", 3306))) or 3306),
-        "user": ask("Usuário", current.get("user", "")),
-        "password": ask("Senha", current.get("password", "")),
-        "database": ask("Banco/database", current.get("database", "")),
-        "charset": ask("Charset", current.get("charset", "latin1"), hint="latin1, utf8"),
-        "allow_as_origin": confirm_default("Pode ser origem?", bool(current.get("allow_as_origin", True))),
-        "allow_as_destination": confirm_default("Pode ser destino?", bool(current.get("allow_as_destination", True))),
+        "label": ask(t("db.label_prompt"), current.get("label", tag)),
+        "host": ask(t("db.column.host"), current.get("host", "")),
+        "port": int(ask(t("db.port_prompt"), str(current.get("port", 3306))) or 3306),
+        "user": ask(t("db.user_prompt"), current.get("user", "")),
+        "password": ask(t("db.password_prompt"), current.get("password", "")),
+        "database": ask(t("db.name_prompt"), current.get("database", "")),
+        "charset": ask(t("db.charset_prompt"), current.get("charset", "latin1"), hint=t("db.charset_hint")),
+        "allow_as_origin": confirm_default(t("db.allow_origin"), bool(current.get("allow_as_origin", True))),
+        "allow_as_destination": confirm_default(t("db.allow_destination"), bool(current.get("allow_as_destination", True))),
     }
     profiles[tag] = profile
     save_config(config, paths)
-    console.print(f"[green]Banco salvo:[/] {tag}")
-    if confirm("Testar conexão agora?"):
+    console.print(t("db.saved", tag=tag))
+    if confirm(t("db.test_now")):
         ok, msg = test_connection(profile)
-        console.print(("[green]OK[/] " if ok else "[red]ERRO[/] ") + msg)
+        console.print((t("ok") if ok else t("error")) + " " + msg)
         return 0 if ok else 1
     return 0
 
@@ -1195,7 +1218,7 @@ def ask(label: str, default: str = "", *, hint: str = "") -> str:
 
 
 def confirm_default(question: str, default: bool, *, default_label: str = "") -> bool:
-    suffix = "S/n" if default else "s/N"
+    suffix = t("prompt.yes_no.default_yes" if default else "prompt.yes_no.default_no")
     label = f" {default_label}" if default_label else ""
     answer = input(f"{question} [{suffix}]{label} ").strip().lower()
     if not answer:
@@ -1210,51 +1233,51 @@ def cmd_client(paths: AppPaths, args: argparse.Namespace) -> int:
         system = find_system_client()
         table = Table(title=t("client.title"))
         table.add_column(t("status.item"))
-        table.add_column("Status")
+        table.add_column(t("client.column.status"))
         table.add_column(t("status.details"))
-        table.add_row(t("client.managed_folder"), "OK", str(paths.managed_client_dir))
-        table.add_row(t("status.managed_client"), "OK" if managed else "WARN", managed.describe() if managed else t("status.not_installed"))
-        table.add_row(t("status.system_client"), "OK" if system else "WARN", system.describe() if system else t("status.not_found"))
-        table.add_row(t("status.python_engine"), "OK", t("status.available"))
+        table.add_row(t("client.managed_folder"), t("status.ok"), str(paths.managed_client_dir))
+        table.add_row(t("status.managed_client"), t("status.ok") if managed else t("status.warn"), managed.describe() if managed else t("status.not_installed"))
+        table.add_row(t("status.system_client"), t("status.ok") if system else t("status.warn"), system.describe() if system else t("status.not_found"))
+        table.add_row(t("status.python_engine"), t("status.ok"), t("status.available"))
         console.print(table)
     elif sub == "path":
         console.print(str(paths.managed_client_dir))
     elif sub in {"install", "update"}:
         return cmd_client_install(paths, args)
     elif sub == "remove":
-        if paths.managed_client_dir.exists() and confirm(f"Remover {paths.managed_client_dir}?"):
+        if paths.managed_client_dir.exists() and confirm(t("client.remove_confirm", path=paths.managed_client_dir)):
             shutil.rmtree(paths.managed_client_dir)
-            console.print("[green]Cliente gerenciado removido.[/]")
+            console.print(t("client.removed"))
         else:
-            console.print("Nada removido.")
+            console.print(t("client.nothing_removed"))
     return 0
 
 
 def cmd_client_install(paths: AppPaths, args: argparse.Namespace) -> int:
-    console.print("Este comando instala o cliente MariaDB gerenciado")
+    console.print(t("client.install.intro"))
     try:
         if args.archive_url:
             target_desc = args.archive_url
-            sha_desc = args.sha256 or "não informado"
+            sha_desc = args.sha256 or t("client.install.sha_missing")
         else:
             package = resolve_default_package()
             target_desc = f"{package.file_name} ({package.os_name}/{package.cpu})"
             sha_desc = package.sha256
-        console.print(f"Pacote: {target_desc}")
-        console.print(f"Destino: {paths.managed_client_dir / 'mariadb' / 'current'}")
-        console.print(f"SHA256: {sha_desc}")
-        if not args.yes and not confirm("Continuar com a instalação do cliente MariaDB gerenciado?"):
-            console.print("Cancelado.")
+        console.print(t("client.install.package", package=target_desc))
+        console.print(t("client.install.destination", path=paths.managed_client_dir / 'mariadb' / 'current'))
+        console.print(t("client.install.sha", sha=sha_desc))
+        if not args.yes and not confirm(t("client.install.confirm")):
+            console.print(t("client.install.cancelled"))
             return 1
-        with console.status("Baixando e instalando cliente MariaDB gerenciado...", spinner="dots"):
+        with console.status(t("client.install.downloading"), spinner="dots"):
             client = install_managed_client(paths, archive_url=args.archive_url, sha256=args.sha256)
-        console.print(f"[green]Cliente gerenciado instalado:[/] {client.describe()}")
+        console.print(t("client.install.success", client=client.describe()))
         return 0
     except ManagedClientError as exc:
-        console.print(f"[red]ERRO[/] {exc}")
+        console.print(f"[red]{t('error')}[/] {exc}")
         return 2
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]ERRO[/] Falha ao instalar cliente gerenciado: {exc}")
+        console.print(t("client.install.failed", error=exc))
         return 1
 
 
@@ -1264,7 +1287,7 @@ def cmd_logs(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print(str(paths.log_dir))
     elif sub == "tail":
         if not paths.log_file.exists():
-            console.print(f"Nenhum log encontrado ainda em {paths.log_file}")
+            console.print(t("logs.none", path=paths.log_file))
             return 0
         lines = paths.log_file.read_text(encoding="utf-8").splitlines()
         for line in lines[-max(1, int(getattr(args, "lines", 40))):]:
@@ -1279,22 +1302,22 @@ def cmd_logs(paths: AppPaths, args: argparse.Namespace) -> int:
             subprocess.Popen(["xdg-open", str(paths.log_dir)])
         console.print(str(paths.log_dir))
     elif sub == "clear":
-        if paths.log_dir.exists() and confirm(f"Limpar logs em {paths.log_dir}?"):
+        if paths.log_dir.exists() and confirm(t("logs.clear_confirm", path=paths.log_dir)):
             shutil.rmtree(paths.log_dir)
             paths.log_dir.mkdir(parents=True, exist_ok=True)
-            console.print("[green]Logs limpos.[/]")
+            console.print(t("logs.cleared"))
     return 0
 
 
 def cmd_uninstall(paths: AppPaths, args: argparse.Namespace) -> int:
-    console.print("Para desinstalar o comando instalado via uv/pipx, rode um dos comandos abaixo conforme seu instalador:")
+    console.print(t("uninstall.intro"))
     console.print("  uv tool uninstall database-table-cloning-tool")
     console.print("  pipx uninstall database-table-cloning-tool")
     if args.all:
         for path in (paths.config_dir, paths.data_dir, paths.state_dir, paths.cache_dir):
-            console.print(f"Remover dados: {path}")
+            console.print(t("uninstall.remove_data", path=path))
     else:
-        console.print("Por padrão, mantenha o config para uma reinstalação futura.")
+        console.print(t("uninstall.keep_config"))
     return 0
 
 
@@ -1503,13 +1526,14 @@ def interactive_backup(paths: AppPaths) -> int:
 
 def _manual_schema_operation_options(plan: SchemaPlan, selected: set[int]) -> list[MenuOption]:
     symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~"}
+    action_labels = {"add": t("schema.add"), "modify": t("schema.modify"), "move": t("schema.move"), "drop": t("schema.drop"), "replace": t("schema.modify")}
     labels = {"column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
     options: list[MenuOption] = []
     for index, operation in enumerate(plan.operations):
         if operation.action == "preserve" or not operation.sql:
             continue
         mark = "[x]" if index in selected else "[ ]"
-        group = f"{operation.action.upper()} — {labels.get(operation.category, operation.category).upper()}"
+        group = f"{action_labels.get(operation.action, operation.action).upper()} — {labels.get(operation.category, operation.category).upper()}"
         details = "; ".join(operation.details) or group
         options.append(MenuOption(f"{mark} {symbols.get(operation.action, '?')} {labels.get(operation.category, operation.category)} {operation.name}", f"toggle:{index}", f"{group}. {details}"))
     options.extend((
@@ -1532,7 +1556,7 @@ def interactive_manual_schema_selection(config: dict, origin_tag: str, destinati
             source_schema, target_schema = inspect_schema_pair(origin, destination, table)
             plans.append(build_schema_plan(compare_schema(source_schema, target_schema), action, source=source_schema, target=target_schema))
         except Exception as exc:  # noqa: BLE001
-            console.print(f"[red]FALHOU[/] {table}: {exc}")
+            console.print(t("schema.failed", table=table, message=exc))
             return 1
 
     selected_by_table: dict[str, set[int]] = {plan.table: set() for plan in plans}
@@ -1572,18 +1596,18 @@ def interactive_manual_schema_selection(config: dict, origin_tag: str, destinati
         if plan.operations:
             print_schema_plan(plan, show_sql=True)
     typed = input(t("prompt.apply_selected")).strip()
-    if typed.upper() != "APLICAR":
-        console.print("Cancelado. Nenhuma alteração foi feita.")
+    if typed.upper() != t("prompt.apply_word"):
+        console.print(t("prompt.cancelled_no_changes"))
         return 1
     for plan in selected_plans:
         if not plan.operations:
             continue
         report = execute_schema_plan(destination, plan)
         if not report.ok:
-            console.print(f"[red]FALHOU[/] {plan.table}: após {len(report.applied)} SQL aplicado(s), falhou: {report.failed}")
-            console.print(f"[red]ERRO[/] {report.error}")
+            console.print(t("schema.apply.failed", table=plan.table, count=len(report.applied), failed=report.failed))
+            console.print(t("schema.apply.error", error=report.error))
             return 1
-        console.print(f"[green]OK[/] {plan.table}: {len(report.applied)} SQL aplicado(s).")
+        console.print(t("schema.apply.success", table=plan.table, count=len(report.applied)))
     return 0
 
 
@@ -1662,10 +1686,10 @@ def advanced_rows_text(insert_missing: bool, where_clause: str = "") -> str:
 
 def advanced_backup_text(backup_mode: str) -> str:
     if backup_mode == "keep":
-        return "sim - mantém o backup no banco após sincronizar com sucesso"
+        return t("advanced.backup.keep_description")
     if backup_mode == "temp":
-        return "sim - backup temporário, remove ao concluir com sucesso"
-    return "não"
+        return t("advanced.backup.temp_description")
+    return t("advanced.backup.none")
 
 
 def advanced_backup_options() -> list[MenuOption]:
@@ -1877,10 +1901,10 @@ def interactive_db(paths: AppPaths) -> int:
 
 def interactive_defaults(paths: AppPaths) -> int:
     config = load_config(paths)
-    origin = choose_profile(config, "Origem padrão", config.get("defaults", {}).get("origin", ""))
+    origin = choose_profile(config, t("db.profile.origin_default"), config.get("defaults", {}).get("origin", ""))
     if origin == "back":
         return 0
-    destination = choose_profile(config, "Destino padrão", config.get("defaults", {}).get("destination", ""))
+    destination = choose_profile(config, t("db.profile.destination_default"), config.get("defaults", {}).get("destination", ""))
     if destination == "back":
         return 0
     return cmd_db(paths, argparse.Namespace(db_command="set-defaults", origin=origin, destination=destination))

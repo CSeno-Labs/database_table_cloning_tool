@@ -11,6 +11,7 @@ from typing import Any
 
 from .clients import DumpClient
 from .db import get_connection
+from .i18n import t
 from .paths import AppPaths
 from .tables import quote_identifier
 
@@ -32,6 +33,18 @@ class TableResult:
     skipped_existing_rows: int | None = None
     destination_matched_rows: int | None = None
     planned_insert_rows: int | None = None
+    details: str = ""
+
+
+def summarize_dump_error(error: str, *, limit: int = 500) -> str:
+    """Return a compact diagnostic, preferring the database client's error line."""
+    lines = [line.strip() for line in error.splitlines() if line.strip()]
+    database_errors = [line for line in lines if re.search(r"\bERROR\s+\d+", line, re.IGNORECASE)]
+    summary = database_errors[-1] if database_errors else " ".join(lines)
+    summary = re.sub(r"\s+", " ", summary)
+    if len(summary) > limit:
+        return summary[: limit - 3].rstrip() + "..."
+    return summary
 
 
 class SyncError(RuntimeError):
@@ -69,9 +82,9 @@ def validate_where_clause(where_clause: str | None) -> str:
         if pattern.startswith(r"\b"):
             if re.search(pattern, upper):
                 token = pattern.replace("\\b", "")
-                raise ValueError(f"WHERE contém comando não permitido: {token}")
+                raise ValueError(t("engine.where.command", token=token))
         elif pattern in where:
-            raise ValueError(f"WHERE contém token não permitido: {pattern}")
+            raise ValueError(t("engine.where.token", token=pattern))
     return where
 
 
@@ -88,7 +101,7 @@ def build_key_predicate(primary_key: list[str], keys: list[tuple]) -> tuple[str,
     for key in keys:
         values = tuple(key) if isinstance(key, tuple) else (key,)
         if len(values) != len(primary_key):
-            raise SyncError("Quantidade de valores da chave não bate com a chave primária.")
+            raise SyncError(t("engine.key_count_mismatch"))
         parts = []
         for column, value in zip(primary_key, values):
             parts.append(f"{quote_identifier(column)} = %s")
@@ -106,7 +119,7 @@ def get_primary_key(config: dict[str, Any], table: str) -> list[str]:
         rows.sort(key=lambda row: int(row.get("Seq_in_index", 0)))
         primary_key = [row["Column_name"] for row in rows]
         if not primary_key:
-            raise SyncError(f"A tabela {table} não possui chave primária. Sincronização parcial precisa de chave primária para identificar linhas.")
+            raise SyncError(t("engine.primary_key_missing", table=table))
         return primary_key
     finally:
         conn.close()
@@ -233,7 +246,7 @@ def ensure_structure(config: dict[str, Any], table: str, create_sql: str, *, cre
     try:
         cur = conn.cursor()
         if not create_missing:
-            raise SyncError(f"Tabela {table} não existe no destino e create_missing_tables=false.")
+            raise SyncError(t("engine.destination_table_missing", table=table))
         cur.execute(create_sql)
         conn.commit()
     finally:
@@ -395,7 +408,7 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
             out.write("SET FOREIGN_KEY_CHECKS=0;\n")
             proc = subprocess.run(dump_cmd, stdout=out, stderr=subprocess.PIPE, text=True, check=False)
             if proc.returncode != 0:
-                raise SyncError(f"Falha no dump de {table}: {proc.stderr.strip()}")
+                raise SyncError(t("engine.dump_failed", table=table, error=proc.stderr.strip()))
             out.write("\nSET FOREIGN_KEY_CHECKS=1;\n")
 
         stage = "import_dest"
@@ -403,11 +416,18 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
         with sql_path.open("rb") as fh:
             proc = subprocess.run(import_cmd, stdin=fh, stderr=subprocess.PIPE, text=True, check=False)
         if proc.returncode != 0:
-            raise SyncError(f"Falha no import de {table}: {proc.stderr.strip()}")
+            raise SyncError(t("engine.import_failed", table=table, error=proc.stderr.strip()))
         stage = "count_dest"
         return TableResult(table=table, ok=True, engine=f"dump/{client.source.value}/{client.vendor}", rows=row_count(destino, table), stage="done", backup_table=backup_table)
     except Exception as exc:  # noqa: BLE001
-        return TableResult(table=table, ok=False, engine="dump", message=str(exc), stage=stage, backup_table=backup_table)
+        details = str(exc)
+        summary = summarize_dump_error(details)
+        message = (
+            t("engine.stage_failed_prefix", stage=stage, table=table) + summary
+            if summary
+            else t("engine.stage_failed_empty", stage=stage, table=table)
+        )
+        return TableResult(table=table, ok=False, engine="dump", message=message, details=details, stage=stage, backup_table=backup_table)
     finally:
         for path in (src_defaults, dst_defaults, sql_path):
             try:
@@ -463,7 +483,7 @@ def run_python_advanced_sync(config: dict[str, Any], table: str, *, where_clause
         primary_key = get_primary_key(origem, table)
         source_columns = get_columns(origem, table)
         if not source_columns:
-            raise SyncError(f"Tabela {table} não encontrada na origem.")
+            raise SyncError(t("engine.source_table_missing", table=table))
         create_sql = sanitize_create_table(get_create_table(origem, table))
         stage = "ensure_dest_structure"
         ensure_structure(destino, table, create_sql, create_missing=bool(sync_cfg.get("create_missing_tables", True)))
@@ -536,7 +556,7 @@ def run_python_sync(config: dict[str, Any], table: str) -> TableResult:
     try:
         source_columns = get_columns(origem, table)
         if not source_columns:
-            raise SyncError(f"Tabela {table} não encontrada na origem.")
+            raise SyncError(t("engine.source_table_missing", table=table))
         create_sql = sanitize_create_table(get_create_table(origem, table))
         stage = "ensure_dest_structure"
         ensure_structure(

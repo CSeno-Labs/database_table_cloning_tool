@@ -1,22 +1,94 @@
+import json
 from pathlib import Path
 
 from syncdb.cli import main
+from syncdb.paths import AppPaths
 
 EXE_PATH = "C:/fake/local/bin/sync-db.exe"
 
 
-def test_version_flag_reports_3_0_1(capsys):
+def test_version_flag_reports_3_0_2(capsys):
     code = main(["--version"])
 
     assert code == 0
-    assert "sync-db 3.0.1" in capsys.readouterr().out
+    assert "sync-db 3.0.2" in capsys.readouterr().out
 
 
-def test_short_version_flag_reports_3_0_1(capsys):
+def test_short_version_flag_reports_3_0_2(capsys):
     code = main(["-v"])
 
     assert code == 0
-    assert "sync-db 3.0.1" in capsys.readouterr().out
+    assert "sync-db 3.0.2" in capsys.readouterr().out
+
+
+def test_interactive_startup_notifies_about_cached_update(monkeypatch, tmp_path: Path, capsys):
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    paths.config_file.write_text(json.dumps({"language": "en", "profiles": {}}), encoding="utf-8")
+    monkeypatch.setattr("syncdb.cli.run_interactive_menu", lambda _paths: 0)
+    monkeypatch.setattr("syncdb.cli.check_for_update", lambda *_args: "3.0.3", raising=False)
+
+    assert main(["--config", str(paths.config_file)]) == 0
+
+    output = capsys.readouterr().out
+    assert "Update available: 3.0.3" in output
+    assert "sync-db update" in output
+
+
+def test_interactive_startup_update_notice_uses_configured_portuguese(monkeypatch, tmp_path: Path, capsys):
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    paths.config_file.write_text(json.dumps({"language": "pt-BR", "profiles": {}}), encoding="utf-8")
+    monkeypatch.setattr("syncdb.cli.run_interactive_menu", lambda _paths: 0)
+    monkeypatch.setattr("syncdb.cli.check_for_update", lambda *_args: "3.0.3")
+
+    assert main(["--config", str(paths.config_file)]) == 0
+
+    output = capsys.readouterr().out
+    assert "Atualização disponível: 3.0.3" in output
+    assert "Execute `sync-db update`" in output
+
+
+def test_interactive_startup_holds_update_notice_until_any_key(monkeypatch, tmp_path: Path, capsys):
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    paths.config_file.write_text(json.dumps({"language": "pt-BR", "profiles": {}}), encoding="utf-8")
+    events: list[str] = []
+
+    class TTY:
+        @staticmethod
+        def isatty() -> bool:
+            return True
+
+    def read_key() -> str:
+        events.append("key")
+        return "x"
+
+    def run_menu(_paths: AppPaths) -> int:
+        events.append("menu")
+        return 0
+
+    monkeypatch.setattr("syncdb.cli.sys.stdin", TTY())
+    monkeypatch.setattr("syncdb.cli.read_key", read_key, raising=False)
+    monkeypatch.setattr("syncdb.cli.run_interactive_menu", run_menu)
+    monkeypatch.setattr("syncdb.cli.check_for_update", lambda *_args: "3.0.3")
+
+    assert main(["--config", str(paths.config_file)]) == 0
+
+    output = capsys.readouterr().out
+    assert "Atualização disponível: 3.0.3" in output
+    assert "Pressione qualquer tecla para continuar" in output
+    assert events == ["key", "menu"]
+
+
+def test_version_flag_does_not_run_update_check(monkeypatch, capsys):
+    def unexpected_check(*_args):
+        raise AssertionError("update check should only run for the interactive menu")
+
+    monkeypatch.setattr("syncdb.cli.check_for_update", unexpected_check)
+
+    assert main(["--version"]) == 0
+    assert "sync-db 3.0.2" in capsys.readouterr().out
 
 
 def test_update_reinstalls_from_main_with_uv(monkeypatch, capsys):

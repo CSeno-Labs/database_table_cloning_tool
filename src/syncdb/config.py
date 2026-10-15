@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .i18n import DEFAULT_LANGUAGE, normalize_language
+from .i18n import DEFAULT_LANGUAGE, normalize_language, t
 from .paths import AppPaths
 
 
@@ -83,11 +83,10 @@ def load_config(paths: AppPaths | None = None) -> dict[str, Any]:
             data = json.load(fh)
     except json.JSONDecodeError as exc:
         raise ConfigError(
-            f"Config JSON inválido em {paths.config_file}: {exc.msg} "
-            f"(line {exc.lineno} column {exc.colno})."
+            t("config.invalid_json", path=paths.config_file, line=exc.lineno, column=exc.colno)
         ) from exc
     except OSError as exc:
-        raise ConfigError(f"Não consegui ler o config {paths.config_file}: {exc}") from exc
+        raise ConfigError(t("config.read_error", path=paths.config_file, error=exc)) from exc
     return merge_defaults(data)
 
 
@@ -175,15 +174,17 @@ def resolve_profile_pair(config: dict[str, Any], origin: str | None = None, dest
     origin_tag = origin or defaults.get("origin")
     destination_tag = destination or defaults.get("destination")
     if not origin_tag or origin_tag not in profiles:
-        raise ValueError(f"Origem não encontrada: {origin_tag or '(não configurada)'}")
+        message = t("db.profile.origin_missing", tag=origin_tag) if origin_tag else t("db.profile.origin_missing", tag=t("db.profile.not_configured"))
+        raise ValueError(message)
     if not destination_tag or destination_tag not in profiles:
-        raise ValueError(f"Destino não encontrado: {destination_tag or '(não configurado)'}")
+        message = t("db.profile.destination_missing", tag=destination_tag) if destination_tag else t("db.profile.destination_missing", tag=t("db.profile.destination_not_configured"))
+        raise ValueError(message)
     origin_profile = normalize_profile(origin_tag, profiles[origin_tag])
     destination_profile = normalize_profile(destination_tag, profiles[destination_tag])
     if not origin_profile.get("allow_as_origin", True):
-        raise ValueError(f"{origin_tag} não pode ser origem.")
+        raise ValueError(t("db.profile.origin_forbidden", tag=origin_tag))
     if not destination_profile.get("allow_as_destination", True):
-        raise ValueError(f"{destination_tag} não pode ser destino.")
+        raise ValueError(t("db.profile.destination_forbidden", tag=destination_tag))
     origin_profile["alias"] = origin_tag
     destination_profile["alias"] = destination_tag
     return origin_profile, destination_profile
