@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
+from rich.text import Text
 
 from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
@@ -577,11 +578,6 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
             if result.ok:
                 extra = f" backup={result.backup_table}" if result.backup_table else ""
                 console.print(f"[green]OK[/] {table} ({result.engine}) rows={result.rows}{extra}")
-            else:
-                stage = f" etapa={result.stage}" if result.stage else ""
-                console.print(f"[red]FALHOU[/] {table}{stage}: {result.message}")
-                if result.details:
-                    console.print(f"Detalhes completos: {paths.log_file}")
 
     cleanup_temporary_backups(runtime_config, backup_mode, results)
 
@@ -596,7 +592,29 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
         table.add_row(result.table, "OK" if result.ok else "FALHOU", result.engine, result.stage or "", "" if result.rows is None else str(result.rows), result.backup_table or "")
     console.print(table)
     write_sync_log(paths, runtime_config, tables, resolved.kind, results)
+    print_sync_errors(results, paths.log_file)
     return 0 if all(r.ok for r in results) else 1
+
+
+def _sync_error_detail(result) -> str:
+    message = (result.message or "Sem detalhe informado.").strip()
+    prefix = f"Falha em {result.stage} de {result.table}: "
+    if result.engine == "dump" and message.startswith(prefix):
+        return message[len(prefix):]
+    return message
+
+
+def print_sync_errors(results: list, log_file: Path) -> None:
+    failures = [result for result in results if not result.ok]
+    if not failures:
+        return
+
+    console.print("\n[bold red]Erros da sincronização[/]")
+    for failure in failures:
+        detail = _sync_error_detail(failure)
+        body = Text(f"Etapa: {failure.stage or 'não informada'}\nErro: {detail}")
+        console.print(Panel(body, title=f"{failure.table} — FALHOU", border_style="red", expand=True))
+    console.print(f"Log detalhado: {log_file}")
 
 
 def print_sync_summary(results: list) -> None:
