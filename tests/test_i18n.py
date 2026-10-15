@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,20 +15,204 @@ from syncdb.cli import (
     cmd_client,
     cmd_doctor,
     confirm,
+    cleanup_temporary_backups,
     format_sync_context,
     interactive_language,
     main,
     print_schema_plan,
     set_config_language,
 )
-from syncdb.config import default_config, load_config
+from syncdb.engine import TableResult
+from syncdb.config import default_config, load_config, resolve_profile_pair
+from syncdb.engine import validate_where_clause
 from syncdb.i18n import set_language
 from syncdb.interactive import MenuOption, menu_renderable
 from syncdb.paths import AppPaths
-from syncdb.schema import SchemaAction, SchemaPlan, SchemaPlanOperation
+from syncdb.schema import (
+    SchemaAction,
+    SchemaDiff,
+    SchemaPlan,
+    SchemaPlanOperation,
+    SchemaSnapshot,
+    build_schema_plan,
+    normalize_schema_action,
+)
+from syncdb.tables import quote_identifier
+
+
+def test_english_sync_failure_output_is_fully_localized(monkeypatch, tmp_path, capsys):
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    config = default_config()
+    config["language"] = "en"
+    paths.config_file.write_text(json.dumps(config), encoding="utf-8")
+
+    result = TableResult(
+        table="sample_table",
+        ok=False,
+        engine="dump",
+        stage="import_dest",
+        message="Failure during import_dest for sample_table: ERROR 1062 duplicate entry",
+        details="full diagnostic",
+    )
+    monkeypatch.setattr(
+        "syncdb.cli.resolve_client",
+        lambda *args, **kwargs: SimpleNamespace(kind="dump", reason="managed client available (mariadb).", client=object()),
+    )
+    monkeypatch.setattr("syncdb.cli.run_dump_sync", lambda *args: result)
+    monkeypatch.setattr("syncdb.cli.write_sync_log", lambda *args, **kwargs: None)
+
+    assert main(["--config", str(paths.config_file), "sync", "-t", "sample_table"]) == 1
+    output = capsys.readouterr().out
+
+    for expected in (
+        "Flow:", "Engine:", "Synchronizing sample_table", "Summary", "Table", "Status",
+        "Stage", "Rows", "FAILED", "Synchronization errors", "Detailed log:",
+    ):
+        assert expected in output
+    for untranslated in (
+        "Fluxo:", "Motor:", "Sincronizando", "Resumo", "Tabela", "FALHOU", "Etapa",
+        "Linhas", "Erros da sincronização", "Log detalhado:", "Falha em",
+    ):
+        assert untranslated not in output
+
+
+def test_english_advanced_sync_failure_output_is_localized_after_summary(monkeypatch, tmp_path, capsys):
+    paths = AppPaths.from_base(tmp_path)
+    paths.ensure_dirs()
+    config = default_config()
+    config["language"] = "en"
+    paths.config_file.write_text(json.dumps(config), encoding="utf-8")
+
+    from syncdb.engine import TableResult
+
+    preflight = TableResult(
+        table="sample_table", ok=True, engine="python/advanced", stage="preflight",
+        primary_key=["id"], origin_matched_rows=1, destination_matched_rows=0,
+        planned_insert_rows=1,
+    )
+    failure = TableResult(
+        table="sample_table", ok=False, engine="python/advanced", stage="import_dest",
+        message="Failure during import_dest for sample_table: ERROR 1062 duplicate entry",
+    )
+    monkeypatch.setattr("syncdb.cli.preflight_advanced_sync", lambda *args: [preflight])
+    monkeypatch.setattr("syncdb.cli.run_python_advanced_sync", lambda *args, **kwargs: failure)
+    import syncdb.cli as cli
+    events = []
+    original_print_sync_errors = cli.print_sync_errors
+
+    def fake_write_sync_log(*args, **kwargs):
+        events.append("log")
+
+    def tracked_print_sync_errors(*args, **kwargs):
+        events.append("errors")
+        return original_print_sync_errors(*args, **kwargs)
+
+    monkeypatch.setattr("syncdb.cli.write_sync_log", fake_write_sync_log)
+    monkeypatch.setattr("syncdb.cli.print_sync_errors", tracked_print_sync_errors)
+
+    assert main([
+        "--config", str(paths.config_file), "sync", "-t", "sample_table",
+        "--insert-missing", "-y",
+    ]) == 1
+    assert events == ["log", "errors"]
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+
+    for expected in (
+        "Advanced synchronization preview", "Primary key", "Rows in source",
+        "Summary", "Synchronization errors", "Stage: import_dest",
+        "Error: ERROR 1062 duplicate entry", "Detailed log:", "FAILED",
+    ):
+        assert expected in output
+    assert output.index("Summary") < output.index("Synchronization errors")
+    for untranslated in (
+        "Prévia da sincronização", "Sincronizando", "Etapa:", "Erro:",
+        "Erros da sincronização", "Log detalhado:",
+    ):
+        assert untranslated not in output
+
+
+def test_english_profile_validation_errors_are_localized():
+    set_language("en")
+    try:
+        with pytest.raises(ValueError, match="Source database not found: prod"):
+            resolve_profile_pair({"profiles": {}}, "prod", "local")
+    finally:
+        set_language("pt-BR")
+
+
+def test_english_where_validation_errors_are_localized():
+    set_language("en")
+    try:
+        with pytest.raises(ValueError, match="WHERE clause contains a disallowed command: DROP"):
+            validate_where_clause("name = 1 OR DROP")
+    finally:
+        set_language("pt-BR")
+
+
+def test_english_schema_action_error_is_localized():
+    set_language("en")
+    try:
+        with pytest.raises(ValueError, match="Invalid schema action"):
+            normalize_schema_action("invalid")
+    finally:
+        set_language("pt-BR")
+
+
+def test_english_invalid_table_identifier_error_is_localized():
+    set_language("en")
+    try:
+        with pytest.raises(ValueError, match="Invalid identifier"):
+            quote_identifier("bad-name")
+    finally:
+        set_language("pt-BR")
+
+
+def test_english_temporary_backup_cleanup_messages_are_localized(monkeypatch):
+    set_language("en")
+    try:
+        success = TableResult("orders", True, "dump", backup_table="orders_backup")
+        monkeypatch.setattr("syncdb.cli.drop_table", lambda *_args: None)
+        cleanup_temporary_backups({"destino": {}}, "temp", [success])
+        assert success.message == "temporary backup removed"
+        assert success.backup_table is None
+
+        def fail_drop(*_args):
+            raise RuntimeError("permission denied")
+
+        failure = TableResult("orders", True, "dump", backup_table="orders_backup")
+        monkeypatch.setattr("syncdb.cli.drop_table", fail_drop)
+        cleanup_temporary_backups({"destino": {}}, "temp", [failure])
+        assert failure.ok is False
+        assert failure.message.startswith("Synchronization finished, but temporary backup")
+        assert "falhou" not in failure.message
+    finally:
+        set_language("pt-BR")
+
+
+def test_english_schema_plan_details_are_localized():
+    set_language("en")
+    try:
+        source = SchemaSnapshot(
+            "orders", True,
+            columns=(("id", "INT", "NO", None, "", "", 1), ("name", "VARCHAR(40)", "YES", None, "", "", 2)),
+        )
+        target = SchemaSnapshot("orders", True, columns=(("id", "INT", "NO", None, "", "", 1),))
+        diff = SchemaDiff("orders", True, True, missing_columns=("name",), changed_columns=("id",))
+        plan = build_schema_plan(diff, "update", source=source, target=target)
+        details = [detail for operation in plan.operations for detail in operation.details]
+        assert "after id" in details
+        assert "destination: INT NOT NULL" in details
+        assert "source: INT NOT NULL" in details
+        assert not any("origem" in detail or "destino" in detail or "depois de" in detail for detail in details)
+    finally:
+        set_language("pt-BR")
+
 
 
 def test_default_configuration_uses_brazilian_portuguese():
+
     assert default_config()["language"] == "pt-BR"
 
 

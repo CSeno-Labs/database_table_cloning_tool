@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.request import urlopen, urlretrieve
 
 from .clients import DumpClient, find_managed_client
+from .i18n import t
 from .paths import AppPaths
 
 DEFAULT_MARIADB_VERSION = "11.4.8"
@@ -47,8 +48,7 @@ def detect_platform(system: str | None = None, machine: str | None = None) -> tu
     if system == "Linux" and cpu == "x86_64":
         return "Linux", cpu, "linux-systemd-x86_64.tar.gz"
     raise ManagedClientError(
-        f"Cliente MariaDB gerenciado ainda não tem pacote automático para {system}/{machine}. "
-        "Use cliente do sistema ou fallback Python."
+        t("client.platform.unsupported", system=system, machine=machine)
     )
 
 
@@ -70,7 +70,7 @@ def resolve_default_package(version: str = DEFAULT_MARIADB_VERSION) -> ClientPac
 def select_release_file(release_data: dict, *, os_name: str, cpu: str, filename_suffix: str) -> ClientPackage:
     releases = release_data.get("release_data") or {}
     if not releases:
-        raise ManagedClientError("Resposta da API MariaDB não contém release_data.")
+        raise ManagedClientError(t("client.release_data_missing"))
     version, release = next(iter(releases.items()))
     for file_info in release.get("files", []):
         file_name = file_info.get("file_name") or ""
@@ -96,7 +96,7 @@ def select_release_file(release_data: dict, *, os_name: str, cpu: str, filename_
             os_name=os_name,
             cpu=cpu,
         )
-    raise ManagedClientError(f"Nenhum pacote MariaDB compatível encontrado para {os_name}/{cpu}.")
+    raise ManagedClientError(t("client.package_not_found", os=os_name, cpu=cpu))
 
 
 def install_managed_client(paths: AppPaths, package: ClientPackage | None = None, archive_url: str | None = None, sha256: str | None = None) -> DumpClient:
@@ -127,7 +127,7 @@ def install_managed_client(paths: AppPaths, package: ClientPackage | None = None
     staging.rename(target)
     client = find_managed_client(paths, "mariadb")
     if not client:
-        raise ManagedClientError(f"Cliente extraído em {target}, mas não encontrei mariadb/mariadb-dump em bin/.")
+        raise ManagedClientError(t("client.executables_missing", target=target))
     return client
 
 
@@ -138,7 +138,7 @@ def verify_sha256(path: Path, expected: str) -> None:
             digest.update(chunk)
     actual = digest.hexdigest().lower()
     if actual != expected.lower():
-        raise ManagedClientError(f"Checksum SHA256 inválido para {path.name}: esperado {expected}, obtido {actual}.")
+        raise ManagedClientError(t("client.sha256_invalid", file=path.name, expected=expected, actual=actual))
 
 
 def extract_archive(archive: Path, target: Path) -> None:
@@ -151,7 +151,7 @@ def extract_archive(archive: Path, target: Path) -> None:
         with tarfile.open(archive) as tf:
             safe_extract_tar(tf, target)
         return
-    raise ManagedClientError(f"Formato de pacote não suportado: {archive.name}")
+    raise ManagedClientError(t("client.archive.unsupported", archive=archive.name))
 
 
 def safe_extract_tar(tf: tarfile.TarFile, target: Path) -> None:
@@ -159,7 +159,7 @@ def safe_extract_tar(tf: tarfile.TarFile, target: Path) -> None:
     for member in tf.getmembers():
         member_path = (target / member.name).resolve()
         if target_resolved not in member_path.parents and member_path != target_resolved:
-            raise ManagedClientError(f"Pacote tar contém caminho inseguro: {member.name}")
+            raise ManagedClientError(t("client.archive_path_unsafe", path=member.name))
     tf.extractall(target)
 
 
@@ -194,4 +194,4 @@ def validate_extracted_client(path: Path) -> None:
         candidates = [bin_dir / "mariadb", bin_dir / "mariadb-dump"]
     missing = [str(p) for p in candidates if not p.exists()]
     if missing:
-        raise ManagedClientError("Pacote não contém os binários esperados: " + ", ".join(missing))
+        raise ManagedClientError(t("client.binaries_missing", missing=", ".join(missing)))
