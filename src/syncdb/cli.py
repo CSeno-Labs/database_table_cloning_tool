@@ -567,6 +567,8 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
                     result = run_dump_sync(runtime_config, table, resolved.client, paths)
                 else:
                     result = run_python_sync(runtime_config, table)
+                if not result.ok:
+                    progress.update(task_id, description=f"[bold red]FALHOU[/] {table}")
                 progress.advance(task_id)
             else:
                 with console.status(f"Carregando tabela {table}...", spinner="dots"):

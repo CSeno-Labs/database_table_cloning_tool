@@ -1,8 +1,50 @@
 import json
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 from syncdb.cli import main
 from syncdb.engine import TableResult
+
+
+def test_failed_table_marks_progress_task_as_failed(monkeypatch, tmp_path: Path):
+    class FakeProgress:
+        def __init__(self):
+            self.description = None
+            self.advanced = 0
+
+        def add_task(self, description, total):
+            self.description = description
+            return 1
+
+        def update(self, task_id, *, description):
+            self.description = description
+
+        def advance(self, task_id):
+            self.advanced += 1
+
+    progress = FakeProgress()
+    result = TableResult(
+        table="periodo",
+        ok=False,
+        engine="dump",
+        stage="import_dest",
+        message="Falha em import_dest de periodo: ERROR 1062 duplicate",
+    )
+
+    config = tmp_path / "config" / "config.json"
+    monkeypatch.setattr("syncdb.cli.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("syncdb.cli.resolve_client", lambda *args, **kwargs: SimpleNamespace(kind="python", client=None, reason="test"))
+    monkeypatch.setattr("syncdb.cli.run_python_sync", lambda *args: result)
+    monkeypatch.setattr("syncdb.cli.sync_progress", lambda total: nullcontext(progress))
+    monkeypatch.setattr("syncdb.cli.cleanup_temporary_backups", lambda *args: None)
+    monkeypatch.setattr("syncdb.cli.write_sync_log", lambda *args, **kwargs: None)
+
+    code = main(["--config", str(config), "sync", "-t", "periodo"])
+
+    assert code == 1
+    assert progress.advanced == 1
+    assert progress.description == "[bold red]FALHOU[/] periodo"
 
 
 def test_sync_writes_log_file_for_failed_run(monkeypatch, tmp_path: Path, capsys):
