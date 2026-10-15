@@ -26,6 +26,7 @@ from .managed_client import ManagedClientError, install_managed_client, resolve_
 from .paths import AppPaths
 from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
+from .update_check import check_for_update
 
 console = Console()
 APP_VERSION = "3.0.2"
@@ -297,6 +298,9 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
     else:
         set_language(load_config(paths).get("language"))
     if not args.command:
+        latest = check_for_update(paths, APP_VERSION)
+        if latest:
+            console.print(f"[yellow]{t('update.available', latest=latest)}[/]")
         return run_interactive_menu(paths)
     if args.command == "init":
         return cmd_init(paths, quiet=getattr(args, "quiet", False))
