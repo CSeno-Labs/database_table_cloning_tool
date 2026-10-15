@@ -27,7 +27,7 @@ from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements,
 from .tables import parse_tables, parse_tables_file
 
 console = Console()
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.0.2"
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
 
@@ -580,6 +580,8 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
             else:
                 stage = f" etapa={result.stage}" if result.stage else ""
                 console.print(f"[red]FALHOU[/] {table}{stage}: {result.message}")
+                if result.details:
+                    console.print(f"Detalhes completos: {paths.log_file}")
 
     cleanup_temporary_backups(runtime_config, backup_mode, results)
 
@@ -1014,6 +1016,7 @@ def write_sync_log(paths: AppPaths, runtime_config: dict, tables: list[str], eng
                 "engine": result.engine,
                 "rows": result.rows,
                 "message": result.message,
+                "details": getattr(result, "details", ""),
                 "stage": result.stage,
                 "backup_table": result.backup_table,
                 "sync_type": getattr(result, "sync_type", "full_replace"),

@@ -32,6 +32,18 @@ class TableResult:
     skipped_existing_rows: int | None = None
     destination_matched_rows: int | None = None
     planned_insert_rows: int | None = None
+    details: str = ""
+
+
+def summarize_dump_error(error: str, *, limit: int = 500) -> str:
+    """Return a compact diagnostic, preferring the database client's error line."""
+    lines = [line.strip() for line in error.splitlines() if line.strip()]
+    database_errors = [line for line in lines if re.search(r"\bERROR\s+\d+", line, re.IGNORECASE)]
+    summary = database_errors[-1] if database_errors else " ".join(lines)
+    summary = re.sub(r"\s+", " ", summary)
+    if len(summary) > limit:
+        return summary[: limit - 3].rstrip() + "..."
+    return summary
 
 
 class SyncError(RuntimeError):
@@ -407,7 +419,10 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
         stage = "count_dest"
         return TableResult(table=table, ok=True, engine=f"dump/{client.source.value}/{client.vendor}", rows=row_count(destino, table), stage="done", backup_table=backup_table)
     except Exception as exc:  # noqa: BLE001
-        return TableResult(table=table, ok=False, engine="dump", message=str(exc), stage=stage, backup_table=backup_table)
+        details = str(exc)
+        summary = summarize_dump_error(details)
+        message = f"Falha em {stage} de {table}: {summary}" if summary else f"Falha em {stage} de {table}."
+        return TableResult(table=table, ok=False, engine="dump", message=message, details=details, stage=stage, backup_table=backup_table)
     finally:
         for path in (src_defaults, dst_defaults, sql_path):
             try:

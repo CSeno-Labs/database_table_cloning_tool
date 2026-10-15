@@ -9,7 +9,7 @@ def test_sync_writes_log_file_for_failed_run(monkeypatch, tmp_path: Path):
     config = tmp_path / "config" / "config.json"
 
     def fake_run_python_sync(sync_config, table):
-        return TableResult(table=table, ok=False, engine="python", message="can't connect")
+        return TableResult(table=table, ok=False, engine="python", message="can't connect", details="full diagnostic payload")
 
     monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
 
@@ -24,6 +24,7 @@ def test_sync_writes_log_file_for_failed_run(monkeypatch, tmp_path: Path):
     assert entry["tables"] == ["periodo"]
     assert entry["status"] == "failed"
     assert entry["results"][0]["message"] == "can't connect"
+    assert entry["results"][0]["details"] == "full diagnostic payload"
 
 
 def test_logs_tail_prints_recent_log_lines(monkeypatch, tmp_path: Path, capsys):

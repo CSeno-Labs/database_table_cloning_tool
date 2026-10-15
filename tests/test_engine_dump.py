@@ -232,3 +232,59 @@ def test_run_table_backup_uses_explicit_backup_name(monkeypatch):
     assert result.ok is True
     assert result.backup_table == "periodo_bkp"
     assert calls == [("periodo", "periodo_bkp")]
+
+
+def test_run_dump_sync_returns_compact_import_error_and_preserves_full_stderr(monkeypatch, tmp_path: Path):
+    import subprocess
+
+    from syncdb.engine import run_dump_sync
+    from syncdb.paths import AppPaths
+
+    client = DumpClient(ClientSource.MANAGED, "mariadb", tmp_path / "mariadb-dump", tmp_path / "mariadb")
+    paths = AppPaths.from_base(tmp_path / "app")
+    paths.ensure_dirs()
+    sql = "INSERT INTO t VALUES\n" + ",\n".join(f"({i})" for i in range(2000))
+    full_stderr = sql + "\nERROR 1062 (23000) at line 65619: Duplicate entry '688146' for key 'PRIMARY'"
+    calls = iter([subprocess.CompletedProcess([], 0, stderr=""), subprocess.CompletedProcess([], 1, stderr=full_stderr)])
+
+    monkeypatch.setattr("syncdb.engine.table_exists", lambda *args: True)
+    monkeypatch.setattr("syncdb.engine._defaults_file", lambda config, tmpdir: tmpdir / f"{config['database']}.cnf")
+    monkeypatch.setattr("syncdb.engine.build_dump_command", lambda *args, **kwargs: ["dump"])
+    monkeypatch.setattr("syncdb.engine.build_import_command", lambda *args, **kwargs: ["import"])
+    monkeypatch.setattr("syncdb.engine.subprocess.run", lambda *args, **kwargs: next(calls))
+
+    result = run_dump_sync(
+        {"origem": {"database": "source"}, "destino": {"database": "target"}, "sync": {"truncate_before_insert": False}},
+        "registros",
+        client,
+        paths,
+    )
+
+    assert result.ok is False
+    assert result.stage == "import_dest"
+    assert "INSERT INTO" not in result.message
+    assert "ERROR 1062 (23000) at line 65619" in result.message
+    assert len(result.message) < 200
+    assert result.details.endswith("ERROR 1062 (23000) at line 65619: Duplicate entry '688146' for key 'PRIMARY'")
+    assert len(result.details) > 10000
+
+
+def test_summarize_dump_error_extracts_duplicate_key_diagnostic_from_large_sql():
+    from syncdb.engine import summarize_dump_error
+
+    sql_payload = "INSERT INTO `frequenciaBioV2_registros` VALUES\n" + ",\n".join(f"({i}, 'registro enorme')" for i in range(5000))
+    stderr = f"{sql_payload}\nERROR 1062 (23000) at line 65619: Duplicate entry '688146' for key 'PRIMARY'"
+
+    summary = summarize_dump_error(stderr)
+
+    assert summary == "ERROR 1062 (23000) at line 65619: Duplicate entry '688146' for key 'PRIMARY'"
+    assert len(summary) < 200
+
+
+def test_summarize_dump_error_limits_unstructured_stderr():
+    from syncdb.engine import summarize_dump_error
+
+    summary = summarize_dump_error("x" * 5000)
+
+    assert len(summary) <= 503
+    assert summary.endswith("...")
