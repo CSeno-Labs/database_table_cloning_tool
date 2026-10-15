@@ -193,7 +193,7 @@ def test_schema_recreate_table_tty_prompts_backup_then_requires_case_insensitive
     monkeypatch.setattr(cli, "execute_recreate_table", lambda *args, **kwargs: calls.append(kwargs) or type("Report", (), {"ok": True, "backup_table": "child_syncdb_backup_20260824_120000", "failed": None, "error": ""})())
 
     assert cli.cmd_schema(app_paths(tmp_path), args) == 0
-    assert calls[0] == "Deseja manter tabela atual como backup? [s/N]"
+    assert calls[0] == "Deseja manter tabela atual como backup? [s/N] "
     assert calls[1] == "Digite APLICAR para recriar a tabela: "
     assert calls[2] == {"keep_backup": True}
 

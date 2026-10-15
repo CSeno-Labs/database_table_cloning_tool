@@ -11,6 +11,7 @@ from time import perf_counter
 from typing import Any
 
 from .db import get_connection
+from .i18n import t
 from .tables import quote_identifier
 
 
@@ -123,17 +124,17 @@ def normalize_schema_action(value: str | None) -> SchemaAction:
     raw = (value or "diff").strip().lower()
     if raw in _SCHEMA_ACTIONS:
         return _SCHEMA_ACTIONS[raw]
-    raise ValueError("Ação de schema inválida. Use diff, copy, update ou recreate-table.")
+    raise ValueError(t("schema.action_invalid"))
 
 
 def describe_schema_action(action: SchemaAction) -> str:
     if action == SchemaAction.DIFF:
-        return "diff: mostra diferenças sem alterar nada"
+        return t("doctor.action_description.diff")
     if action == SchemaAction.COPY:
-        return "copy: copia estrutura da origem para o destino; pode adicionar, alterar e remover"
+        return t("doctor.action_description.copy")
     if action == SchemaAction.UPDATE:
-        return "update: copia estrutura preservando extras do destino; pode adicionar e alterar, mas não remove extras"
-    return "recreate-table: recria a tabela do destino com a estrutura da origem"
+        return t("doctor.action_description.update")
+    return t("doctor.action_description.recreate-table")
 
 
 def _close(cursor: Any) -> None:
@@ -154,7 +155,7 @@ def rewrite_create_table_identifier(create_sql: str, target_table: str) -> str:
     target = quote_identifier(target_table)
     rewritten, count = _CREATE_TABLE_IDENTIFIER_RE.subn(rf"\g<prefix>{target}", create_sql, count=1)
     if count != 1:
-        raise ValueError("SHOW CREATE TABLE não retornou uma instrução CREATE TABLE válida.")
+        raise ValueError(t("schema.create.invalid"))
     return rewritten
 
 
@@ -166,7 +167,7 @@ def _create_sql_from_row(row: Any) -> str:
     else:
         value = None
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("SHOW CREATE TABLE não retornou a estrutura da tabela de origem.")
+        raise ValueError(t("schema.create.missing_structure"))
     return value
 
 
@@ -478,9 +479,9 @@ def _column_sql(column: tuple[Any, ...]) -> str:
 def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: SchemaSnapshot | None = None, target: SchemaSnapshot | None = None) -> SchemaPlan:
     action = normalize_schema_action(action.value if isinstance(action, SchemaAction) else action)
     if action not in {SchemaAction.COPY, SchemaAction.UPDATE}:
-        raise ValueError("Plano automático suporta apenas copy ou update.")
+        raise ValueError(t("schema.plan.unsupported"))
     if not diff.source_exists or not diff.target_exists:
-        raise ValueError("Não é possível gerar plano automático quando a tabela não existe nos dois bancos.")
+        raise ValueError(t("schema.plan.table_missing"))
 
     operations: list[SchemaPlanOperation] = []
     source_columns = {str(column[0]): column for column in (source.columns if source else ())}
@@ -493,14 +494,17 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
         position = source_names.index(name)
         if name in source_columns:
             details.append(_column_description(source_columns[name]))
-            details.append(f"depois de {source_names[position - 1]}" if position else "primeira coluna")
+            details.append(t("schema.detail.after", column=source_names[position - 1]) if position else t("schema.detail.first_column"))
         after_sql = f" AFTER {quote_identifier(source_names[position - 1])}" if position else " FIRST"
         sql = f"ALTER TABLE {quote_identifier(diff.table)} ADD COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])}{after_sql};" if name in source_columns else ""
         operations.append(SchemaPlanOperation("add", "column", name, tuple(details), sql))
     for name in diff.changed_columns:
         details = ()
         if name in source_columns and name in target_columns:
-            details = (f"destino: {_column_description(target_columns[name])}", f"origem: {_column_description(source_columns[name])}")
+            details = (
+                t("schema.detail.destination", value=_column_description(target_columns[name])),
+                t("schema.detail.source", value=_column_description(source_columns[name])),
+            )
         sql = f"ALTER TABLE {quote_identifier(diff.table)} MODIFY COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])};" if name in source_columns else ""
         operations.append(SchemaPlanOperation("modify", "column", name, details, sql))
     move_target_names = _target_order_after_additions(source_names, target_names)
@@ -508,8 +512,8 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
         details = ()
         sql = ""
         if name in source_columns:
-            source_after_label = source_after or "início"
-            details = (f"origem: depois de {source_after_label}",)
+            source_after_label = source_after or t("schema.detail.beginning")
+            details = (t("schema.detail.source_after", label=source_after_label),)
             after_sql = f" AFTER {quote_identifier(source_after)}" if source_after else " FIRST"
             sql = f"ALTER TABLE {quote_identifier(diff.table)} MODIFY COLUMN {quote_identifier(name)} {_column_sql(source_columns[name])}{after_sql};"
         operations.append(SchemaPlanOperation("move", "column", name, details, sql))
@@ -529,7 +533,7 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
         return f"ALTER TABLE {quote_identifier(diff.table)} {'DROP PRIMARY KEY' if name == 'PRIMARY' else 'DROP INDEX ' + quote_identifier(name)};"
     for name in diff.missing_indexes:
         index = source_indexes.get(name)
-        operations.append(SchemaPlanOperation("add", "index", name, (f"origem: ({', '.join(index[2])})",) if index else (), index_add(index) if index else ""))
+        operations.append(SchemaPlanOperation("add", "index", name, (t("schema.detail.source_index", columns=', '.join(index[2])),) if index else (), index_add(index) if index else ""))
     for name in diff.changed_indexes:
         index = source_indexes.get(name)
         operations.append(SchemaPlanOperation("replace", "index", name, (), f"{index_drop(name)}\n{index_add(index)}" if index else ""))
@@ -556,7 +560,7 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
     for name in diff.changed_table_options:
         value = source_options.get(name, "")
         sql = f"ALTER TABLE {quote_identifier(diff.table)} ENGINE={value};" if name == "engine" else f"ALTER TABLE {quote_identifier(diff.table)} DEFAULT COLLATE {value};"
-        operations.append(SchemaPlanOperation("modify", "table_option", name, (f"origem: {value}",), sql))
+        operations.append(SchemaPlanOperation("modify", "table_option", name, (t("schema.detail.source_option", value=value),), sql))
     return SchemaPlan(table=diff.table, action=action, operations=tuple(operations))
 
 
