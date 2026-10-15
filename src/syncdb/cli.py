@@ -20,7 +20,7 @@ from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
 from .db import test_connection
 from .engine import drop_table, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
-from .interactive import MenuOption, read_text_or_back, select_option
+from .interactive import MenuOption, read_key, read_text_or_back, select_option
 from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, get_language, normalize_language, set_language, t
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
@@ -301,6 +301,10 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, paths: A
         latest = check_for_update(paths, APP_VERSION)
         if latest:
             console.print(f"[yellow]{t('update.available', latest=latest)}[/]")
+            if sys.stdin.isatty():
+                print(t("update.press_key"), end="", flush=True)
+                read_key()
+                print()
         return run_interactive_menu(paths)
     if args.command == "init":
         return cmd_init(paths, quiet=getattr(args, "quiet", False))
