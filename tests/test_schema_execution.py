@@ -198,6 +198,22 @@ def test_schema_recreate_table_tty_prompts_backup_then_requires_case_insensitive
     assert calls[2] == {"keep_backup": True}
 
 
+def test_schema_recreate_missing_target_reports_creation(monkeypatch, tmp_path, capsys):
+    from syncdb import cli
+
+    args = argparse.Namespace(schema_command="recreate-table", tables=["child"], file=None, origin=None, destination=None, yes=True, keep_backup=False)
+    monkeypatch.setattr(cli, "load_config", lambda paths: {"language": "pt-BR"})
+    monkeypatch.setattr(cli, "resolve_profile_pair", lambda *args: ({"alias": "prod"}, {"alias": "local"}))
+    monkeypatch.setattr(
+        cli,
+        "execute_recreate_table",
+        lambda *args, **kwargs: type("Report", (), {"ok": True, "created": True, "backup_table": None, "failed": None, "error": ""})(),
+    )
+
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 0
+    assert "criada sem dados" in capsys.readouterr().out
+
+
 def test_schema_recreate_table_yes_defaults_to_deleting_old_table(monkeypatch, tmp_path):
     from syncdb import cli
 

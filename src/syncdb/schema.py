@@ -114,6 +114,7 @@ class RecreateTableReport:
     backup_table: str | None = None
     failed: str | None = None
     error: str = ""
+    created: bool = False
 
     @property
     def ok(self) -> bool:
@@ -201,6 +202,7 @@ def execute_recreate_table(
     applied: list[str] = []
     current = ""
     swapped = False
+    target_exists = True
     try:
         source_cursor = source_connection.cursor()
         current = f"SHOW CREATE TABLE {quote_identifier(table)}"
@@ -208,26 +210,50 @@ def execute_recreate_table(
         create_sql = rewrite_create_table_identifier(_create_sql_from_row(source_cursor.fetchone()), temporary_name)
 
         target_cursor = target_connection.cursor()
+        schema_name, separator, table_name = table.rpartition(".")
+        if not separator:
+            schema_name = str(target_config.get("database") or "")
+            table_name = table
+        current = (
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = COALESCE(%s, DATABASE()) AND table_name = %s LIMIT 1"
+        )
+        target_cursor.execute(current, (schema_name or None, table_name))
+        target_exists = target_cursor.fetchone() is not None
+
         current = create_sql
         target_cursor.execute(current)
         applied.append(current)
-        current = (
-            f"RENAME TABLE {quote_identifier(table)} TO {quote_identifier(backup_name)}, "
-            f"{quote_identifier(temporary_name)} TO {quote_identifier(table)}"
-        )
+        if target_exists:
+            current = (
+                f"RENAME TABLE {quote_identifier(table)} TO {quote_identifier(backup_name)}, "
+                f"{quote_identifier(temporary_name)} TO {quote_identifier(table)}"
+            )
+        else:
+            current = f"RENAME TABLE {quote_identifier(temporary_name)} TO {quote_identifier(table)}"
         target_cursor.execute(current)
         applied.append(current)
         swapped = True
-        if not keep_backup:
+        if target_exists and not keep_backup:
             current = f"DROP TABLE {quote_identifier(backup_name)}"
             target_cursor.execute(current)
             applied.append(current)
         commit = getattr(target_connection, "commit", None)
         if commit:
             commit()
-        return RecreateTableReport(tuple(applied), backup_name if keep_backup else None)
+        return RecreateTableReport(
+            applied=tuple(applied),
+            backup_table=backup_name if target_exists and keep_backup else None,
+            created=not target_exists,
+        )
     except Exception as exc:  # noqa: BLE001 - report the exact failed database statement
-        return RecreateTableReport(tuple(applied), backup_name if swapped else None, current or None, str(exc))
+        return RecreateTableReport(
+            applied=tuple(applied),
+            backup_table=backup_name if swapped and target_exists else None,
+            failed=current or None,
+            error=str(exc),
+            created=swapped and not target_exists,
+        )
     finally:
         if source_cursor is not None:
             _close(source_cursor)

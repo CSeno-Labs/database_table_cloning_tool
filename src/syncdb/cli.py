@@ -877,8 +877,11 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         for table in tables:
             report = execute_recreate_table(origin, destination, table, keep_backup=keep_backup)
             if report.ok:
-                backup_text = t("schema.backup.kept_text", backup=report.backup_table) if report.backup_table else t("schema.backup.removed_text")
-                console.print(t("schema.recreate.success", table=table, origin=origin["alias"], backup_text=backup_text))
+                if getattr(report, "created", False):
+                    console.print(t("schema.recreate.created", table=table, origin=origin["alias"]))
+                else:
+                    backup_text = t("schema.backup.kept_text", backup=report.backup_table) if report.backup_table else t("schema.backup.removed_text")
+                    console.print(t("schema.recreate.success", table=table, origin=origin["alias"], backup_text=backup_text))
             else:
                 console.print(t("schema.recreate.failed", table=table, failed=report.failed))
                 console.print(t("schema.apply.error", error=report.error))

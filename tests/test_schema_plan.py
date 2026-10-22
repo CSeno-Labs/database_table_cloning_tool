@@ -1,3 +1,5 @@
+import pytest
+
 from syncdb.schema import SchemaSnapshot, build_schema_plan, compare_schema
 
 
@@ -10,6 +12,14 @@ def snapshot(*, columns=(), indexes=(), foreign_keys=(), options=()):
         foreign_keys=tuple(foreign_keys),
         table_options=tuple(options),
     )
+
+
+def test_copy_plan_for_missing_target_points_to_recreate_table():
+    source = snapshot()
+    target = SchemaSnapshot(table="pessoa", exists=False)
+
+    with pytest.raises(ValueError, match="sync-db schema recreate-table"):
+        build_schema_plan(compare_schema(source, target), action="copy", source=source, target=target)
 
 
 def test_copy_plan_adds_changes_reorders_and_removes_extras():

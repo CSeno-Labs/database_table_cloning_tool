@@ -178,7 +178,7 @@ sync-db schema recreate-table -t aluno -o prod -d local
 | `update` | Aplica o plano de atualização, preservando colunas, índices e FKs exclusivos do destino. |
 | `plan copy` | Mostra como deixar o destino igual à origem, incluindo remoções. |
 | `copy` | Aplica o plano completo, incluindo remoções após confirmação. |
-| `recreate-table` | Cria uma nova tabela a partir da origem e faz uma troca atômica; pergunta se a tabela anterior deve ficar como backup datado. |
+| `recreate-table` | Recria a tabela a partir da origem e faz uma troca atômica; se ela ainda não existir no destino, cria a estrutura vazia. Quando já existir, pergunta se deve manter a tabela anterior como backup datado. |
 
 No menu **Estrutura das tabelas**, existe também o modo **Escolher manualmente o que aplicar**. Ele parte do plano completo e permite marcar/desmarcar cada operação antes da revisão e confirmação.
 
