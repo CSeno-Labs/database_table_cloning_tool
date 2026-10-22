@@ -34,6 +34,7 @@ class SchemaSnapshot:
     foreign_keys: tuple[tuple[Any, ...], ...] = ()
     table_options: tuple[tuple[str, str], ...] = ()
     timings: tuple[tuple[str, float], ...] = ()
+    create_sql: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,7 @@ class RecreateTableReport:
     backup_table: str | None = None
     failed: str | None = None
     error: str = ""
+    created: bool = False
 
     @property
     def ok(self) -> bool:
@@ -201,6 +203,7 @@ def execute_recreate_table(
     applied: list[str] = []
     current = ""
     swapped = False
+    target_exists = True
     try:
         source_cursor = source_connection.cursor()
         current = f"SHOW CREATE TABLE {quote_identifier(table)}"
@@ -208,26 +211,50 @@ def execute_recreate_table(
         create_sql = rewrite_create_table_identifier(_create_sql_from_row(source_cursor.fetchone()), temporary_name)
 
         target_cursor = target_connection.cursor()
+        schema_name, separator, table_name = table.rpartition(".")
+        if not separator:
+            schema_name = str(target_config.get("database") or "")
+            table_name = table
+        current = (
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = COALESCE(%s, DATABASE()) AND table_name = %s LIMIT 1"
+        )
+        target_cursor.execute(current, (schema_name or None, table_name))
+        target_exists = target_cursor.fetchone() is not None
+
         current = create_sql
         target_cursor.execute(current)
         applied.append(current)
-        current = (
-            f"RENAME TABLE {quote_identifier(table)} TO {quote_identifier(backup_name)}, "
-            f"{quote_identifier(temporary_name)} TO {quote_identifier(table)}"
-        )
+        if target_exists:
+            current = (
+                f"RENAME TABLE {quote_identifier(table)} TO {quote_identifier(backup_name)}, "
+                f"{quote_identifier(temporary_name)} TO {quote_identifier(table)}"
+            )
+        else:
+            current = f"RENAME TABLE {quote_identifier(temporary_name)} TO {quote_identifier(table)}"
         target_cursor.execute(current)
         applied.append(current)
         swapped = True
-        if not keep_backup:
+        if target_exists and not keep_backup:
             current = f"DROP TABLE {quote_identifier(backup_name)}"
             target_cursor.execute(current)
             applied.append(current)
         commit = getattr(target_connection, "commit", None)
         if commit:
             commit()
-        return RecreateTableReport(tuple(applied), backup_name if keep_backup else None)
+        return RecreateTableReport(
+            applied=tuple(applied),
+            backup_table=backup_name if target_exists and keep_backup else None,
+            created=not target_exists,
+        )
     except Exception as exc:  # noqa: BLE001 - report the exact failed database statement
-        return RecreateTableReport(tuple(applied), backup_name if swapped else None, current or None, str(exc))
+        return RecreateTableReport(
+            applied=tuple(applied),
+            backup_table=backup_name if swapped and target_exists else None,
+            failed=current or None,
+            error=str(exc),
+            created=swapped and not target_exists,
+        )
     finally:
         if source_cursor is not None:
             _close(source_cursor)
@@ -331,7 +358,8 @@ def inspect_schema(config: dict[str, Any], table: str):
         cursor.execute(f"SHOW CREATE TABLE {quote_identifier(table)}")
         create_row = cursor.fetchone() or {}
         create_sql = create_row.get("Create Table", "") if isinstance(create_row, dict) else create_row[1]
-        foreign_keys = parse_foreign_keys_from_create(str(create_sql))
+        create_sql = str(create_sql)
+        foreign_keys = parse_foreign_keys_from_create(create_sql)
         timings.append(("foreign_keys", perf_counter() - started))
         started = perf_counter()
         cursor.execute(
@@ -343,7 +371,7 @@ def inspect_schema(config: dict[str, Any], table: str):
         table_options = tuple((key, str(options_row.get(key.upper()) or "")) for key in ("engine", "table_collation"))
         timings.append(("table_options", perf_counter() - started))
         timings.append(("total", perf_counter() - total_started))
-        return SchemaSnapshot(table=table, exists=True, columns=columns, indexes=indexes, foreign_keys=foreign_keys, table_options=table_options, timings=tuple(timings))
+        return SchemaSnapshot(table=table, exists=True, columns=columns, indexes=indexes, foreign_keys=foreign_keys, table_options=table_options, timings=tuple(timings), create_sql=create_sql)
     except Exception as exc:
         message = str(exc).lower()
         if "doesn't exist" in message or "does not exist" in message or "unknown table" in message:
@@ -480,8 +508,19 @@ def build_schema_plan(diff: SchemaDiff, action: SchemaAction | str, *, source: S
     action = normalize_schema_action(action.value if isinstance(action, SchemaAction) else action)
     if action not in {SchemaAction.COPY, SchemaAction.UPDATE}:
         raise ValueError(t("schema.plan.unsupported"))
-    if not diff.source_exists or not diff.target_exists:
+    if not diff.source_exists:
         raise ValueError(t("schema.plan.table_missing"))
+    if not diff.target_exists:
+        if source is None or not source.create_sql:
+            raise ValueError(t("schema.create.missing_structure"))
+        create_sql = rewrite_create_table_identifier(source.create_sql, diff.table).rstrip()
+        if not create_sql.endswith(";"):
+            create_sql += ";"
+        return SchemaPlan(
+            table=diff.table,
+            action=action,
+            operations=(SchemaPlanOperation("add", "table", diff.table, (), create_sql),),
+        )
 
     operations: list[SchemaPlanOperation] = []
     source_columns = {str(column[0]): column for column in (source.columns if source else ())}
@@ -615,6 +654,7 @@ def _execution_statements(plan: SchemaPlan) -> tuple[str, ...]:
     # inverse order applies when rebuilding them.  In copy mode this also
     # ensures destination-only columns are dropped only after their FK/index.
     ordered = [
+        *statements("table", {"add"}),
         *statements("foreign_key", {"drop", "replace"}, drops=True),
         *statements("index", {"drop", "replace"}, drops=True),
         *statements("column", {"add", "modify", "move"}),

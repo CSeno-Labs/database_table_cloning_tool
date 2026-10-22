@@ -7,18 +7,18 @@ from syncdb.paths import AppPaths
 EXE_PATH = "C:/fake/local/bin/sync-db.exe"
 
 
-def test_version_flag_reports_3_0_2(capsys):
+def test_version_flag_reports_3_0_3(capsys):
     code = main(["--version"])
 
     assert code == 0
-    assert "sync-db 3.0.2" in capsys.readouterr().out
+    assert "sync-db 3.0.3" in capsys.readouterr().out
 
 
-def test_short_version_flag_reports_3_0_2(capsys):
+def test_short_version_flag_reports_3_0_3(capsys):
     code = main(["-v"])
 
     assert code == 0
-    assert "sync-db 3.0.2" in capsys.readouterr().out
+    assert "sync-db 3.0.3" in capsys.readouterr().out
 
 
 def test_interactive_startup_notifies_about_cached_update(monkeypatch, tmp_path: Path, capsys):
@@ -88,7 +88,7 @@ def test_version_flag_does_not_run_update_check(monkeypatch, capsys):
     monkeypatch.setattr("syncdb.cli.check_for_update", unexpected_check)
 
     assert main(["--version"]) == 0
-    assert "sync-db 3.0.2" in capsys.readouterr().out
+    assert "sync-db 3.0.3" in capsys.readouterr().out
 
 
 def test_update_reinstalls_from_main_with_uv(monkeypatch, capsys):
