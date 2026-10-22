@@ -24,12 +24,12 @@ from .interactive import MenuOption, read_key, read_text_or_back, select_option
 from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, get_language, normalize_language, set_language, t
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
-from .schema import SchemaAction, SchemaDiff, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
+from .schema import SchemaAction, SchemaDiff, SchemaExecutionReport, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
 from .tables import parse_tables, parse_tables_file
 from .update_check import check_for_update
 
 console = Console()
-APP_VERSION = "3.0.2"
+APP_VERSION = "3.0.3"
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
 
@@ -856,14 +856,60 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             if typed.upper() != t("prompt.apply_word"):
                 console.print(t("prompt.cancelled_no_changes"))
                 return 1
+        summary_counts = {"created": 0, "updated": 0, "unchanged": 0, "failures": 0}
+
+        def summary_details(*, include_failures: bool = False) -> str:
+            details = []
+            for kind in ("created", "updated", "unchanged"):
+                count = summary_counts[kind]
+                if count:
+                    form = "one" if count == 1 else "many"
+                    details.append(t(f"schema.summary.{kind}.{form}", count=count))
+            if include_failures:
+                count = summary_counts["failures"]
+                form = "one" if count == 1 else "many"
+                details.append(t(f"schema.summary.failures.{form}", count=count))
+            return ", ".join(details) or t("schema.summary.none_completed")
+
         for plan in plans:
-            report = execute_schema_plan(destination, plan)
+            try:
+                report = execute_schema_plan(destination, plan)
+            except Exception as exc:  # noqa: BLE001 - surface connection/setup failures in the same summary
+                report = SchemaExecutionReport(failed=t("schema.apply.execution"), error=str(exc))
             if report.ok:
+                is_new_table = any(operation.category == "table" and operation.action == "add" for operation in plan.operations)
+                if is_new_table:
+                    summary_counts["created"] += 1
+                elif report.applied:
+                    summary_counts["updated"] += 1
+                else:
+                    summary_counts["unchanged"] += 1
                 console.print(t("schema.apply.success", table=plan.table, count=len(report.applied)))
             else:
+                summary_counts["failures"] += 1
                 console.print(t("schema.apply.failed", table=plan.table, count=len(report.applied), failed=report.failed))
                 console.print(t("schema.apply.error", error=report.error))
+                processed = sum(summary_counts.values())
+                unprocessed = len(plans) - processed
+                details = summary_details(include_failures=True)
+                form = "single" if len(plans) == 1 else "multiple"
+                console.print(t(
+                    f"schema.summary.interrupted.{form}",
+                    processed=processed,
+                    total=len(plans),
+                    details=details,
+                    unprocessed=t(f"schema.summary.unprocessed.{('one' if unprocessed == 1 else 'many')}", count=unprocessed),
+                ))
                 return 1
+
+        table_form = "one" if len(plans) == 1 else "many"
+        failure_form = "one" if summary_counts["failures"] == 1 else "many"
+        console.print(t(
+            "schema.summary.complete",
+            tables=t(f"schema.summary.tables.{table_form}", count=len(plans)),
+            details=summary_details(),
+            failures=t(f"schema.summary.failures.{failure_form}", count=summary_counts["failures"]),
+        ))
         return 0
 
     if action == SchemaAction.RECREATE_TABLE:

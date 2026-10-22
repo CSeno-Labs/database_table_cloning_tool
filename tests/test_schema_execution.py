@@ -158,6 +158,62 @@ def test_schema_command_applies_create_ddl_for_missing_destination(monkeypatch, 
     assert "OK child: 1 SQL aplicado(s)." in shown
 
 
+@pytest.mark.parametrize("command", ["copy", "update"])
+def test_schema_command_prints_completion_summary(monkeypatch, tmp_path, capsys, command):
+    from syncdb import cli
+
+    source_created = SchemaSnapshot(table="new_table", exists=True, create_sql="CREATE TABLE `new_table` (`id` INT)")
+    target_missing = SchemaSnapshot(table="new_table", exists=False)
+    source_updated = SchemaSnapshot(table="updated_table", exists=True, columns=(("id", "int", "NO", None, "", None, 1),))
+    target_updated = SchemaSnapshot(table="updated_table", exists=True)
+    unchanged = SchemaSnapshot(table="unchanged_table", exists=True)
+    snapshots = {
+        "new_table": (source_created, target_missing),
+        "updated_table": (source_updated, target_updated),
+        "unchanged_table": (unchanged, unchanged),
+    }
+    args = argparse.Namespace(schema_command=command, tables=list(snapshots), file=None, origin=None, destination=None, yes=True)
+    monkeypatch.setattr(cli, "load_config", lambda paths: {"language": "pt-BR"})
+    monkeypatch.setattr(cli, "resolve_profile_pair", lambda *args: ({"alias": "source"}, {"alias": "target"}))
+    monkeypatch.setattr(cli, "inspect_schema_pair", lambda _source, _target, table: snapshots[table])
+    monkeypatch.setattr(
+        cli,
+        "execute_schema_plan",
+        lambda _destination, plan: type("Report", (), {"ok": True, "applied": tuple(op.sql for op in plan.operations if op.sql), "failed": None, "error": ""})(),
+    )
+
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 0
+    output = " ".join(capsys.readouterr().out.split())
+    assert "Processamento concluído: 3 tabelas processadas — 1 criada sem dados, 1 atualizada, 1 sem alterações; 0 falhas." in output
+
+
+def test_schema_command_summarizes_failure_and_unprocessed_tables(monkeypatch, tmp_path, capsys):
+    from syncdb import cli
+
+    snapshots = {
+        table: (SchemaSnapshot(table=table, exists=True), SchemaSnapshot(table=table, exists=True))
+        for table in ("first", "failed", "pending")
+    }
+    args = argparse.Namespace(schema_command="copy", tables=list(snapshots), file=None, origin=None, destination=None, yes=True)
+    calls = []
+
+    def execute(_destination, plan):
+        calls.append(plan.table)
+        if plan.table == "failed":
+            raise RuntimeError("simulated failure")
+        return type("Report", (), {"ok": True, "applied": (), "failed": None, "error": ""})()
+
+    monkeypatch.setattr(cli, "load_config", lambda paths: {"language": "pt-BR"})
+    monkeypatch.setattr(cli, "resolve_profile_pair", lambda *args: ({"alias": "source"}, {"alias": "target"}))
+    monkeypatch.setattr(cli, "inspect_schema_pair", lambda _source, _target, table: snapshots[table])
+    monkeypatch.setattr(cli, "execute_schema_plan", execute)
+
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 1
+    assert calls == ["first", "failed"]
+    output = " ".join(capsys.readouterr().out.split())
+    assert "Processamento interrompido: 2 de 3 tabelas — 1 sem alterações, 1 falha; 1 não processada." in output
+
+
 def test_schema_copy_recomputes_displays_and_executes_plan_with_yes(monkeypatch, tmp_path, capsys):
     from syncdb import cli
 
