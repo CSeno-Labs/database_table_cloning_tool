@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 
+import pytest
+
 from syncdb.paths import AppPaths
 from syncdb.schema import SchemaAction, SchemaPlan, SchemaPlanOperation, SchemaSnapshot
 
@@ -43,6 +45,23 @@ def execution_plan(action: SchemaAction = SchemaAction.COPY) -> SchemaPlan:
         SchemaPlanOperation("add", "index", "idx_parent", sql="ALTER TABLE `child` ADD INDEX `idx_parent` (`parent_id`);"),
         SchemaPlanOperation("add", "foreign_key", "fk_parent", sql="ALTER TABLE `child` ADD CONSTRAINT `fk_parent` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`);"),
     ))
+
+
+def test_execute_missing_table_plan_runs_source_create_table_for_copy_and_update():
+    from syncdb.schema import build_schema_plan, compare_schema, execute_schema_plan
+
+    create_sql = "CREATE TABLE `child` (`id` INT NOT NULL) ENGINE=InnoDB"
+    source = SchemaSnapshot(table="child", exists=True, create_sql=create_sql)
+    target = SchemaSnapshot(table="child", exists=False)
+
+    for action in (SchemaAction.COPY, SchemaAction.UPDATE):
+        cursor = FakeCursor()
+        report = execute_schema_plan(
+            {"connection": FakeConnection(cursor)},
+            build_schema_plan(compare_schema(source, target), action, source=source, target=target),
+        )
+        assert report.ok is True
+        assert cursor.executed == [create_sql + ";"]
 
 
 def test_execute_schema_plan_orders_fk_and_index_drops_before_column_drop():
@@ -115,6 +134,28 @@ def test_schema_copy_requires_yes_without_tty_and_does_not_inspect_or_execute(mo
 
     assert cli.cmd_schema(app_paths(tmp_path), args) == 2
     assert "--yes" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["copy", "update"])
+def test_schema_command_applies_create_ddl_for_missing_destination(monkeypatch, tmp_path, capsys, command):
+    from syncdb import cli
+
+    create_sql = "CREATE TABLE `child` (`id` INT NOT NULL) ENGINE=InnoDB"
+    source = SchemaSnapshot(table="child", exists=True, create_sql=create_sql)
+    target = SchemaSnapshot(table="child", exists=False)
+    args = argparse.Namespace(schema_command=command, tables=["child"], file=None, origin=None, destination=None, yes=True)
+    executed = []
+    monkeypatch.setattr(cli, "load_config", lambda paths: {"language": "pt-BR"})
+    monkeypatch.setattr(cli, "resolve_profile_pair", lambda *args: ({"alias": "source"}, {"alias": "target"}))
+    monkeypatch.setattr(cli, "inspect_schema_pair", lambda *args: (source, target))
+    monkeypatch.setattr(cli, "execute_schema_plan", lambda destination, plan: executed.append(plan) or type("Report", (), {"ok": True, "applied": (create_sql + ";",), "failed": None, "error": ""})())
+
+    assert cli.cmd_schema(app_paths(tmp_path), args) == 0
+    assert len(executed) == 1
+    assert executed[0].operations[0].sql == create_sql + ";"
+    shown = capsys.readouterr().out
+    assert "CREATE TABLE `child`" in shown
+    assert "OK child: 1 SQL aplicado(s)." in shown
 
 
 def test_schema_copy_recomputes_displays_and_executes_plan_with_yes(monkeypatch, tmp_path, capsys):

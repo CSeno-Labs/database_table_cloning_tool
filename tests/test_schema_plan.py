@@ -14,12 +14,17 @@ def snapshot(*, columns=(), indexes=(), foreign_keys=(), options=()):
     )
 
 
-def test_copy_plan_for_missing_target_points_to_recreate_table():
-    source = snapshot()
+@pytest.mark.parametrize("action", ["copy", "update"])
+def test_plan_creates_missing_target_table_from_source_ddl(action):
+    create_sql = "CREATE TABLE `pessoa` (`id` INT NOT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB"
+    source = SchemaSnapshot(table="pessoa", exists=True, create_sql=create_sql)
     target = SchemaSnapshot(table="pessoa", exists=False)
 
-    with pytest.raises(ValueError, match="sync-db schema recreate-table"):
-        build_schema_plan(compare_schema(source, target), action="copy", source=source, target=target)
+    plan = build_schema_plan(compare_schema(source, target), action=action, source=source, target=target)
+
+    assert len(plan.operations) == 1
+    assert (plan.operations[0].action, plan.operations[0].category, plan.operations[0].name) == ("add", "table", "pessoa")
+    assert plan.operations[0].sql == create_sql + ";"
 
 
 def test_copy_plan_adds_changes_reorders_and_removes_extras():

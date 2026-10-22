@@ -942,9 +942,9 @@ def render_schema_plan_sql_file(plans: list[SchemaPlan], *, origin: str, destina
         return "\n".join(statements) + ("\n" if statements else "")
 
     symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~", "preserve": "!"}
-    labels = {"column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
+    labels = {"table": t("schema.table_object"), "column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
     sections = ((t("schema.add"), {"add"}), (t("schema.modify"), {"modify", "replace"}), (t("schema.move"), {"move"}), (t("schema.drop"), {"drop"}), (t("schema.preserve"), {"preserve"}))
-    categories = (("column", t("schema.columns")), ("index", t("schema.indexes")), ("foreign_key", t("schema.foreign_keys")), ("table_option", t("schema.table_options")))
+    categories = (("table", t("schema.table_objects")), ("column", t("schema.columns")), ("index", t("schema.indexes")), ("foreign_key", t("schema.foreign_keys")), ("table_option", t("schema.table_options")))
     lines = [t("schema.sql.heading"), t("schema.sql.origin", origin=origin), t("schema.sql.destination", destination=destination)]
     for plan in plans:
         lines.extend(("", f"-- {t('schema.plan', table=plan.table, action=plan.action.value)}"))
@@ -988,16 +988,16 @@ def print_schema_plan(plan: SchemaPlan, *, show_sql: bool = False) -> None:
         return
     symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~", "preserve": "!"}
     styles = {"add": "green", "modify": "yellow", "move": "blue", "drop": "red", "replace": "yellow", "preserve": "cyan"}
-    labels = {"column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
+    labels = {"table": t("schema.table_object"), "column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
     sections = ((t("schema.add"), {"add"}), (t("schema.modify"), {"modify", "replace"}), (t("schema.move"), {"move"}), (t("schema.drop"), {"drop"}), (t("schema.preserve"), {"preserve"}))
-    category_titles = {"column": t("schema.columns"), "index": t("schema.indexes"), "foreign_key": t("schema.foreign_keys"), "table_option": t("schema.table_options")}
+    category_titles = {"table": t("schema.table_objects"), "column": t("schema.columns"), "index": t("schema.indexes"), "foreign_key": t("schema.foreign_keys"), "table_option": t("schema.table_options")}
     for title, actions in sections:
         selected = [operation for operation in plan.operations if operation.action in actions]
         if not selected:
             continue
         console.print(f"\n    [bold]{title} ({len(selected)})[/]")
         printed_category = False
-        for category in ("column", "index", "foreign_key", "table_option"):
+        for category in ("table", "column", "index", "foreign_key", "table_option"):
             grouped = [operation for operation in selected if operation.category == category]
             if not grouped:
                 continue
@@ -1530,7 +1530,7 @@ def interactive_backup(paths: AppPaths) -> int:
 def _manual_schema_operation_options(plan: SchemaPlan, selected: set[int]) -> list[MenuOption]:
     symbols = {"add": "+", "modify": "~", "move": "↔", "drop": "-", "replace": "~"}
     action_labels = {"add": t("schema.add"), "modify": t("schema.modify"), "move": t("schema.move"), "drop": t("schema.drop"), "replace": t("schema.modify")}
-    labels = {"column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
+    labels = {"table": t("schema.table_object"), "column": t("schema.column"), "index": t("schema.index"), "foreign_key": t("schema.foreign_key"), "table_option": t("schema.table_option")}
     options: list[MenuOption] = []
     for index, operation in enumerate(plan.operations):
         if operation.action == "preserve" or not operation.sql:
