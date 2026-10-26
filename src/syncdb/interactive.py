@@ -6,6 +6,7 @@ from io import UnsupportedOperation
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
+from rich.cells import cell_len
 from rich.console import Console, Group
 from rich.live import Live
 from rich.text import Text
@@ -36,6 +37,57 @@ def menu_option_window(index: int, option_count: int, max_visible_options: int =
     return start, start + visible
 
 
+def editable_input_text(value: str) -> Text:
+    """Style the --like flag and unescaped wildcard operators as the user types."""
+    rendered = Text()
+    if not value.startswith("--like") or (len(value) > 6 and not value[6].isspace()):
+        rendered.append(value)
+        return rendered
+
+    rendered.append("--like", style="bold cyan")
+    escaped = False
+    for char in value[6:]:
+        if char in {"%", "_", "*"} and not escaped:
+            rendered.append(char, style="bold magenta")
+        else:
+            rendered.append(char)
+        if char == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    return rendered
+
+
+def _draw_editable_input(prompt: str, characters: list[str], cursor: int) -> None:
+    value = "".join(characters)
+    terminal = bool(getattr(sys.stdout, "isatty", lambda: False)())
+    sys.stdout.write("\r" + prompt)
+    Console(file=sys.stdout, force_terminal=terminal, color_system="standard" if terminal else None).print(
+        editable_input_text(value), end=""
+    )
+    sys.stdout.write("\x1b[K")
+    tail_width = cell_len(value[cursor:])
+    if tail_width:
+        sys.stdout.write(f"\x1b[{tail_width}D")
+    sys.stdout.flush()
+
+
+def _word_left(value: str, cursor: int) -> int:
+    while cursor > 0 and value[cursor - 1].isspace():
+        cursor -= 1
+    while cursor > 0 and not value[cursor - 1].isspace():
+        cursor -= 1
+    return cursor
+
+
+def _word_right(value: str, cursor: int) -> int:
+    while cursor < len(value) and not value[cursor].isspace():
+        cursor += 1
+    while cursor < len(value) and value[cursor].isspace():
+        cursor += 1
+    return cursor
+
+
 def read_text_or_back(prompt: str, *, key_reader: KeyReader | None = None) -> str | None:
     """Read editable text in a TTY, returning None immediately for Esc."""
     supplied_reader = key_reader is not None
@@ -49,39 +101,43 @@ def read_text_or_back(prompt: str, *, key_reader: KeyReader | None = None) -> st
         except (OSError, UnsupportedOperation):
             value = input(prompt)
             return None if value == "\x1b" else value
-    print(prompt, end="", flush=True)
     characters: list[str] = []
     cursor = 0
+    _draw_editable_input(prompt, characters, cursor)
     while True:
         key = key_reader()
-        if key == "escape":
+        normalized = key.lower().replace("+", "_")
+        if normalized in {"escape", "esc"}:
             print()
             return None
-        if key == "enter":
+        if normalized in {"enter", "return"}:
             print()
             return "".join(characters)
-        if key == "left":
-            if cursor > 0:
-                print("\b", end="", flush=True)
-                cursor -= 1
-            continue
-        if key == "right":
-            if cursor < len(characters):
-                print(characters[cursor], end="", flush=True)
-                cursor += 1
-            continue
-        if key == "backspace":
+        if normalized in {"home", "ctrl_home"}:
+            cursor = 0
+        elif normalized in {"end", "ctrl_end"}:
+            cursor = len(characters)
+        elif normalized in {"ctrl_left", "ctrl_fleft"}:
+            cursor = _word_left("".join(characters), cursor)
+        elif normalized in {"ctrl_right", "ctrl_fright"}:
+            cursor = _word_right("".join(characters), cursor)
+        elif normalized == "left":
+            cursor = max(0, cursor - 1)
+        elif normalized == "right":
+            cursor = min(len(characters), cursor + 1)
+        elif normalized == "backspace":
             if cursor > 0:
                 cursor -= 1
                 characters.pop(cursor)
-                tail = "".join(characters[cursor:]) + " "
-                print("\b" + tail + "\b" * len(tail), end="", flush=True)
-            continue
-        if len(key) == 1 and key >= " ":
+        elif normalized == "delete":
+            if cursor < len(characters):
+                characters.pop(cursor)
+        elif len(key) == 1 and key >= " ":
             characters.insert(cursor, key)
             cursor += 1
-            tail = "".join(characters[cursor:])
-            print(key + tail + "\b" * len(tail), end="", flush=True)
+        else:
+            continue
+        _draw_editable_input(prompt, characters, cursor)
 
 
 def apply_menu_key(index: int, key: str, options: list[MenuOption]) -> tuple[int, Any | None]:
@@ -125,9 +181,15 @@ def read_key() -> str:
                 "P": "down",
                 "K": "left",
                 "M": "right",
+                "G": "home",
+                "O": "end",
+                "S": "delete",
+                "s": "ctrl_left",
+                "t": "ctrl_right",
             }.get(code, "")
         return ch
 
+    import select
     import termios
     import tty
 
@@ -135,22 +197,43 @@ def read_key() -> str:
     old = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = sys.stdin.read(1)
+        ch = os.read(fd, 1).decode(errors="ignore")
         if ch in {"\r", "\n"}:
             return "enter"
         if ch == "\x7f":
             return "backspace"
         if ch == "\x1b":
-            seq = sys.stdin.read(2)
-            return {
-                "[A": "up",
-                "[B": "down",
-                "[D": "left",
-                "[C": "right",
-            }.get(seq, "escape")
+            if not select.select([fd], [], [], 0.04)[0]:
+                return "escape"
+            first = os.read(fd, 1).decode(errors="ignore")
+            if first == "O":
+                if not select.select([fd], [], [], 0.04)[0]:
+                    return "escape"
+                return decode_ansi_key("O" + os.read(fd, 1).decode(errors="ignore"))
+            if first != "[":
+                return "escape"
+            seq = "["
+            while True:
+                if not select.select([fd], [], [], 0.04)[0]:
+                    return "escape"
+                next_char = os.read(fd, 1).decode(errors="ignore")
+                seq += next_char
+                if "@" <= next_char <= "~":
+                    break
+            return decode_ansi_key(seq)
         return ch
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def decode_ansi_key(sequence: str) -> str:
+    return {
+        "[A": "up", "[B": "down", "[D": "left", "[C": "right",
+        "[H": "home", "[F": "end", "[1~": "home", "[4~": "end",
+        "[3~": "delete", "[1;5D": "ctrl_left", "[1;5C": "ctrl_right",
+        "[1;5H": "ctrl_home", "[1;5F": "ctrl_end", "[5D": "ctrl_left", "[5C": "ctrl_right",
+        "OH": "home", "OF": "end",
+    }.get(sequence, "escape")
 
 
 def menu_renderable(title: str, option_list: list[MenuOption], index: int, footer: str = "", *, compact: bool = False) -> Group:

@@ -847,7 +847,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print(f"[red]{t('error')}[/] {t('sync.no_tables_basic')}")
         return 2
 
-    if action == SchemaAction.UPDATE:
+    if action == SchemaAction.UPDATE and not getattr(args, "selection_confirmed", False):
         if like_pattern is not None:
             console.print(t("tables.like.matches", pattern=like_pattern, count=len(tables)))
         else:
@@ -861,7 +861,7 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
             if not confirm(t("schema.update.selection.confirm")):
                 console.print(t("prompt.cancelled_no_changes"))
                 return 0
-    elif like_pattern is not None:
+    elif like_pattern is not None and not getattr(args, "selection_confirmed", False):
         print_like_matches(like_pattern, tables)
 
     if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not getattr(args, "interactive", False) and not sys.stdin.isatty():
@@ -1646,7 +1646,7 @@ def read_tables_input(prompt: str | None = None) -> list[str] | None:
     return parse_tables([value])
 
 
-def read_table_selection_input(source_profile: dict, prompt: str | None = None) -> list[str] | None:
+def read_table_selection_input(source_profile: dict, prompt: str | None = None, *, show_matches: bool = True) -> list[str] | None:
     value = read_text_or_back(prompt or t("menu.table_prompt"))
     if value is None:
         return None
@@ -1655,7 +1655,8 @@ def read_table_selection_input(source_profile: dict, prompt: str | None = None) 
         if pattern is None:
             return tables
         tables = resolve_like_tables(source_profile, pattern, connection_timeout=SYNC_PREFLIGHT_TIMEOUT_SECONDS)
-        print_like_matches(pattern, tables)
+        if show_matches:
+            print_like_matches(pattern, tables)
         return tables
     except Exception as exc:  # noqa: BLE001 - user input and read-only source catalog lookup
         console.print(f"[red]{t('error')}[/] {exc}")
@@ -1791,12 +1792,18 @@ def interactive_schema(paths: AppPaths) -> int:
             title=t("menu.schema"),
             border_style="cyan",
         ))
-        tables = read_table_selection_input(config["profiles"][origin])
+        tables = read_table_selection_input(config["profiles"][origin], show_matches=False)
         if tables is None:
             return MENU_BACK
         if not tables:
             console.print(f"[red]{t('error')}[/] {t('menu.no_table')}")
             return 2
+        console.print(t("menu.schema.selection.title", count=len(tables)))
+        for table in tables:
+            console.print(f"  • {table}")
+        if not confirm(t("menu.schema.selection.confirm")):
+            console.print(t("prompt.cancelled_no_changes"))
+            continue
 
         while True:
             choice = select_option(
@@ -1820,7 +1827,7 @@ def interactive_schema(paths: AppPaths) -> int:
             if choice == "diff":
                 status = cmd_schema(paths, argparse.Namespace(schema_command="diff", tables=tables, file=None, origin=origin, destination=destination, verbose=False))
             elif choice in {"copy", "update"}:
-                status = cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False, interactive=True))
+                status = cmd_schema(paths, argparse.Namespace(schema_command=choice, tables=tables, file=None, origin=origin, destination=destination, yes=False, interactive=True, selection_confirmed=True))
             elif choice == "manual":
                 status = interactive_manual_schema_selection(config, origin, destination, tables)
             elif choice == "recreate-table":

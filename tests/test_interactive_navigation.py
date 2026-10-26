@@ -82,6 +82,43 @@ def test_read_text_or_back_returns_none_immediately_on_escape(monkeypatch):
     assert read_text_or_back("Tabelas: ", key_reader=lambda: "escape") is None
 
 
+def test_read_text_or_back_home_end_and_ctrl_arrows_edit_by_word(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter([*"--like alpha_beta", "ctrl_left", "!", "home", "end", "?", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "--like !alpha_beta?"
+
+
+def test_read_text_or_back_supports_home_end_and_delete(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter(["a", "b", "c", "home", "delete", "end", "delete", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "bc"
+
+
+def test_table_selection_input_styles_like_token_and_wildcards():
+    from syncdb.interactive import editable_input_text
+
+    rendered = editable_input_text(r'--like "frequenciaBioV2\_%*"')
+    spans = [(span.start, span.end, span.style) for span in rendered.spans]
+
+    assert rendered.plain == r'--like "frequenciaBioV2\_%*"'
+    assert any(start == 0 and end == 6 and style for start, end, style in spans)
+    styled_wildcards = [rendered.plain[start:end] for start, end, style in spans if style == "bold magenta"]
+    assert styled_wildcards == ["%", "*"]
+    assert sum(1 for _, _, style in spans if style == "bold cyan") == 1
+
+
+def test_terminal_escape_sequences_map_home_end_delete_and_ctrl_arrows():
+    from syncdb.interactive import decode_ansi_key
+
+    assert decode_ansi_key("[H") == "home"
+    assert decode_ansi_key("[F") == "end"
+    assert decode_ansi_key("[3~") == "delete"
+    assert decode_ansi_key("[1;5D") == "ctrl_left"
+    assert decode_ansi_key("[1;5C") == "ctrl_right"
+
+
 def test_sync_context_text_matches_step_labels():
     from syncdb.cli import format_sync_context
 
