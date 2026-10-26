@@ -10,10 +10,14 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)?$")
 
 
 def parse_table_selection_input(value: str) -> tuple[list[str], str | None]:
-    """Parse the interactive table field, preserving escapes in a --like pattern."""
+    """Parse the interactive table field, preserving escapes in a LIKE pattern."""
     stripped = value.strip()
-    if stripped == "--like" or stripped.startswith("--like "):
-        raw_pattern = stripped[len("--like"):].strip()
+    like_option = next(
+        (option for option in ("--like", "-l") if stripped == option or stripped.startswith(option + " ")),
+        None,
+    )
+    if like_option is not None:
+        raw_pattern = stripped[len(like_option):].strip()
         if not raw_pattern:
             raise ValueError("--like requires a pattern")
         if raw_pattern[0] in {"'", chr(34)}:

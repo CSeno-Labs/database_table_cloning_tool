@@ -21,6 +21,12 @@ def test_parse_table_selection_input_preserves_like_escapes_inside_quotes():
     assert pattern == r"frequenciaBioV2\_%"
 
 
+def test_parse_table_selection_input_accepts_short_like_alias_and_preserves_escapes():
+    value = "-l " + chr(34) + "frequenciaBioV2" + chr(92) + "_%" + chr(34)
+
+    assert parse_table_selection_input(value) == ([], "frequenciaBioV2" + chr(92) + "_%")
+
+
 def test_parse_table_selection_input_keeps_explicit_table_list():
     assert parse_table_selection_input("alpha, beta") == (["alpha", "beta"], None)
 

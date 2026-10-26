@@ -206,7 +206,7 @@ def add_table_args(parser: argparse.ArgumentParser, *, like: bool = False) -> No
     parser.add_argument("-t", "--tables", nargs="+", help=t("help.tables_arg"))
     parser.add_argument("-f", "--file", help=t("help.file_arg"))
     if like:
-        parser.add_argument("--like", metavar="PATTERN", help=t("help.like"))
+        parser.add_argument("-l", "--like", metavar="PATTERN", help=t("help.like"))
 
 
 def add_client_install_args(parser: argparse.ArgumentParser) -> None:
