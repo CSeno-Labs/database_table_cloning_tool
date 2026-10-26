@@ -18,14 +18,14 @@ from rich.text import Text
 
 from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
-from .db import test_connection
+from .db import list_table_names, test_connection
 from .engine import TableResult, drop_table, is_source_connection_failure, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
 from .interactive import MenuOption, read_key, read_text_or_back, select_option
 from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, get_language, normalize_language, set_language, t
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
 from .paths import AppPaths
 from .schema import SchemaAction, SchemaDiff, SchemaExecutionReport, SchemaPlan, _execution_statements, _operation_statements, build_schema_plan, compare_schema, describe_schema_action, execute_recreate_table, execute_schema_plan, inspect_schema_pair, normalize_schema_action
-from .tables import parse_tables, parse_tables_file
+from .tables import expand_table_pattern, parse_table_selection_input, parse_tables, parse_tables_file
 from .update_check import check_for_update
 
 console = Console()
@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     update_app.add_argument("--repo-url", default=PROJECT_REPO_URL, help=argparse.SUPPRESS)
 
     sync = sub.add_parser("sync", help=t("help.sync"))
-    add_table_args(sync)
+    add_table_args(sync, like=True)
     sync.add_argument("-o", "--origin", help=t("help.sync_origin"))
     sync.add_argument("-d", "--destination", help=t("help.sync_destination"))
     sync.add_argument("--last", action="store_true", help=t("help.last"))
@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     schema_sub = schema.add_subparsers(dest="schema_command")
     plan = schema_sub.add_parser("plan", help=t("help.plan"), description=t("help.plan"))
     plan.add_argument("plan_action", choices=["copy", "update"], help=t("help.plan_action"))
-    add_table_args(plan)
+    add_table_args(plan, like=True)
     plan.add_argument("-o", "--origin", help=t("help.origin"))
     plan.add_argument("-d", "--destination", help=t("help.destination"))
     plan.add_argument("--sql", action="store_true", help=t("help.sql"))
@@ -136,7 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("recreate-table", t("help.schema.recreate")),
     ):
         schema_cmd = schema_sub.add_parser(name, help=help_text, description=t("help.schema"))
-        add_table_args(schema_cmd)
+        add_table_args(schema_cmd, like=True)
         schema_cmd.add_argument("-o", "--origin", help=t("help.origin"))
         schema_cmd.add_argument("-d", "--destination", help=t("help.destination"))
         if name in {"copy", "update"}:
@@ -201,9 +201,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def add_table_args(parser: argparse.ArgumentParser) -> None:
+def add_table_args(parser: argparse.ArgumentParser, *, like: bool = False) -> None:
     parser.add_argument("-t", "--tables", nargs="+", help=t("help.tables_arg"))
     parser.add_argument("-f", "--file", help=t("help.file_arg"))
+    if like:
+        parser.add_argument("--like", metavar="PATTERN", help=t("help.like"))
 
 
 def add_client_install_args(parser: argparse.ArgumentParser) -> None:
@@ -476,6 +478,20 @@ def collect_tables(args: argparse.Namespace, config: dict | None = None) -> list
     return parse_tables(values)
 
 
+def resolve_like_tables(profile: dict, pattern: str, *, connection_timeout: int | None = None) -> list[str]:
+    source_names = list_table_names(profile, connection_timeout=connection_timeout)
+    matched = expand_table_pattern(pattern, source_names)
+    if not matched:
+        raise ValueError(t("tables.like.no_matches", pattern=pattern))
+    return matched
+
+
+def print_like_matches(pattern: str, tables: list[str]) -> None:
+    console.print(t("tables.like.matches", pattern=pattern, count=len(tables)))
+    for table in tables:
+        console.print(f"  • {table}")
+
+
 def last_tables_path(paths: AppPaths, config: dict) -> Path:
     configured = config.get("sync", {}).get("last_tables_file") or "last_tables.txt"
     path = Path(configured).expanduser()
@@ -521,22 +537,46 @@ def cleanup_temporary_backups(runtime_config: dict, backup_mode: str, results: l
 
 def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
     config = load_config(paths)
-    tables = read_last_tables(paths, config) if getattr(args, "last", False) else collect_tables(args, config)
-    if not tables:
-        console.print(f"[red]{t('error')}[/] {t('sync.no_tables')}")
-        return 2
-
     try:
         runtime_config = sync_runtime_config(config, getattr(args, "origin", None), getattr(args, "destination", None))
     except ValueError as exc:
         console.print(f"[red]{t('error')}[/] {exc}")
         return 2
+
+    like_pattern = getattr(args, "like", None)
+    if like_pattern is not None:
+        if getattr(args, "tables", None) or getattr(args, "file", None) or getattr(args, "last", False):
+            console.print(f"[red]{t('error')}[/] {t('tables.like.mutually_exclusive')}")
+            return 2
+        try:
+            tables = resolve_like_tables(
+                runtime_config["origem"],
+                like_pattern,
+                connection_timeout=SYNC_PREFLIGHT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 - source catalog lookup is a read-only preflight
+            console.print(f"[red]{t('error')}[/] {exc}")
+            return 2
+        print_like_matches(like_pattern, tables)
+    else:
+        tables = read_last_tables(paths, config) if getattr(args, "last", False) else collect_tables(args, config)
+    if not tables:
+        console.print(f"[red]{t('error')}[/] {t('sync.no_tables')}")
+        return 2
+
     backup_mode = getattr(args, "backup", None) or "none"
     runtime_config.setdefault("sync", {})["backup_before_replace"] = backup_mode in {"temp", "keep"}
     where_clause = normalize_where_clause(getattr(args, "where", None))
     insert_missing = bool(getattr(args, "insert_missing", False))
     dry_run = bool(getattr(args, "dry_run", False))
     advanced = bool(where_clause or insert_missing)
+    if like_pattern and not dry_run and not getattr(args, "yes", False):
+        if not sys.stdin.isatty():
+            console.print(f"[red]{t('error')}[/] {t('tables.like.confirm_required')}")
+            return 2
+        if not confirm(t("prompt.confirm")):
+            console.print(t("prompt.cancelled_no_changes"))
+            return 0
     console.print(t("sync.flow", origin=f"[bold]{runtime_config['origem']['alias']}[/]", destination=f"[bold]{runtime_config['destino']['alias']}[/]"))
     if not dry_run:
         save_last_tables(paths, config, tables)
@@ -784,14 +824,27 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         console.print(f"[red]{t('error')}[/] {exc}")
         return 2
     config = load_config(paths)
-    tables = collect_tables(args, config)
-    if not tables:
-        console.print(f"[red]{t('error')}[/] {t('sync.no_tables_basic')}")
-        return 2
+    like_pattern = getattr(args, "like", None)
     try:
         origin, destination = resolve_profile_pair(config, getattr(args, "origin", None), getattr(args, "destination", None))
     except ValueError as exc:
         console.print(f"[red]{t('error')}[/] {exc}")
+        return 2
+
+    if like_pattern is not None:
+        if getattr(args, "tables", None) or getattr(args, "file", None):
+            console.print(f"[red]{t('error')}[/] {t('tables.like.mutually_exclusive')}")
+            return 2
+        try:
+            tables = resolve_like_tables(origin, like_pattern, connection_timeout=SYNC_PREFLIGHT_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - read-only source catalog lookup
+            console.print(f"[red]{t('error')}[/] {exc}")
+            return 2
+        print_like_matches(like_pattern, tables)
+    else:
+        tables = collect_tables(args, config)
+    if not tables:
+        console.print(f"[red]{t('error')}[/] {t('sync.no_tables_basic')}")
         return 2
 
     if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not getattr(args, "interactive", False) and not sys.stdin.isatty():
@@ -1575,6 +1628,22 @@ def read_tables_input(prompt: str | None = None) -> list[str] | None:
     return parse_tables([value])
 
 
+def read_table_selection_input(source_profile: dict, prompt: str | None = None) -> list[str] | None:
+    value = read_text_or_back(prompt or t("menu.table_prompt"))
+    if value is None:
+        return None
+    try:
+        tables, pattern = parse_table_selection_input(value)
+        if pattern is None:
+            return tables
+        tables = resolve_like_tables(source_profile, pattern, connection_timeout=SYNC_PREFLIGHT_TIMEOUT_SECONDS)
+        print_like_matches(pattern, tables)
+        return tables
+    except Exception as exc:  # noqa: BLE001 - user input and read-only source catalog lookup
+        console.print(f"[red]{t('error')}[/] {exc}")
+        return []
+
+
 def interactive_backup(paths: AppPaths) -> int:
     config = load_config(paths)
     destination = choose_profile(config, t("menu.backup.title"), config.get("defaults", {}).get("destination", ""), footer=t("menu.backup.choose_destination"))
@@ -1704,7 +1773,7 @@ def interactive_schema(paths: AppPaths) -> int:
             title=t("menu.schema"),
             border_style="cyan",
         ))
-        tables = read_tables_input()
+        tables = read_table_selection_input(config["profiles"][origin])
         if tables is None:
             return MENU_BACK
         if not tables:
@@ -1929,9 +1998,12 @@ def interactive_sync(paths: AppPaths) -> int:
         tables = last
     else:
         console.print(Panel(format_sync_context(origin=origin, destination=destination, step="tables"), title=t("menu.sync.title"), border_style="cyan"))
-        tables = read_tables_input()
+        tables = read_table_selection_input(config["profiles"][origin])
         if tables is None:
             return MENU_BACK
+        if not tables:
+            console.print(f"[red]{t('error')}[/] {t('menu.no_table')}")
+            return 2
     console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode="auto"), title=t("menu.sync.summary"), border_style="cyan"))
     backup = "none"
     console.print(f"{t('prompt.confirm')}: {origin} → {destination} | {', '.join(tables)} | mode=auto")

@@ -51,22 +51,37 @@ def read_text_or_back(prompt: str, *, key_reader: KeyReader | None = None) -> st
             return None if value == "\x1b" else value
     print(prompt, end="", flush=True)
     characters: list[str] = []
+    cursor = 0
     while True:
         key = key_reader()
-        if key in {"escape", "left"}:
+        if key == "escape":
             print()
             return None
         if key == "enter":
             print()
             return "".join(characters)
+        if key == "left":
+            if cursor > 0:
+                print("\b", end="", flush=True)
+                cursor -= 1
+            continue
+        if key == "right":
+            if cursor < len(characters):
+                print(characters[cursor], end="", flush=True)
+                cursor += 1
+            continue
         if key == "backspace":
-            if characters:
-                characters.pop()
-                print("\b \b", end="", flush=True)
+            if cursor > 0:
+                cursor -= 1
+                characters.pop(cursor)
+                tail = "".join(characters[cursor:]) + " "
+                print("\b" + tail + "\b" * len(tail), end="", flush=True)
             continue
         if len(key) == 1 and key >= " ":
-            characters.append(key)
-            print(key, end="", flush=True)
+            characters.insert(cursor, key)
+            cursor += 1
+            tail = "".join(characters[cursor:])
+            print(key + tail + "\b" * len(tail), end="", flush=True)
 
 
 def apply_menu_key(index: int, key: str, options: list[MenuOption]) -> tuple[int, Any | None]:

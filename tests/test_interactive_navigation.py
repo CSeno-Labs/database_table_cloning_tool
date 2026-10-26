@@ -62,6 +62,20 @@ def test_table_input_escape_returns_no_selection(monkeypatch):
     assert read_tables_input() is None
 
 
+def test_read_text_or_back_left_arrow_moves_cursor_instead_of_returning_to_menu(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter(["a", "c", "left", "b", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "abc"
+
+
+def test_read_text_or_back_right_arrow_moves_cursor_forward(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter(["a", "left", "right", "b", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "ab"
+
+
 def test_read_text_or_back_returns_none_immediately_on_escape(monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 

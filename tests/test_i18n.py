@@ -385,7 +385,7 @@ def test_english_interactive_sync_backup_db_logs_and_client_use_english_labels(m
     monkeypatch.setattr(cli, "read_last_tables", lambda *_args: [])
     choices = iter(["source", "target"])
     monkeypatch.setattr(cli, "choose_profile", lambda *_args, **_kwargs: next(choices))
-    monkeypatch.setattr(cli, "read_tables_input", lambda: ["orders"])
+    monkeypatch.setattr(cli, "read_table_selection_input", lambda _source_profile: ["orders"])
     monkeypatch.setattr(cli, "confirm", lambda question: question == "Continue?")
     monkeypatch.setattr(cli, "cmd_sync", lambda *_args, **_kwargs: 0)
 

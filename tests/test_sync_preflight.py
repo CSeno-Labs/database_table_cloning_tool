@@ -2,8 +2,74 @@ from types import SimpleNamespace
 
 import pytest
 
-from syncdb.cli import main
+from syncdb.cli import main, read_table_selection_input
 from syncdb.engine import TableResult
+
+
+def test_interactive_table_input_resolves_quoted_like_pattern(monkeypatch, capsys):
+    pattern = "frequenciaBioV2" + chr(92) + "_%"
+    raw_input = "--like " + chr(34) + pattern + chr(34)
+    monkeypatch.setattr("syncdb.cli.read_text_or_back", lambda prompt: raw_input)
+    monkeypatch.setattr(
+        "syncdb.cli.list_table_names",
+        lambda profile, **kwargs: ["frequenciaBioV2_registros", "frequenciaBioV2_usuarios", "other"],
+    )
+
+    tables = read_table_selection_input({"host": "mock"})
+
+    assert tables == ["frequenciaBioV2_registros", "frequenciaBioV2_usuarios"]
+    assert "frequenciaBioV2_usuarios" in capsys.readouterr().out
+
+
+def test_sync_like_lists_source_matches_and_requires_confirmation(monkeypatch, tmp_path, capsys):
+    config = tmp_path / "config" / "config.json"
+    pattern = "frequenciaBioV2" + chr(92) + "_%"
+    source_tables = ["frequenciaBioV2_registros", "frequenciaBioV2_usuarios", "outra"]
+    attempted_tables = []
+    confirmations = []
+
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: source_tables)
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (True, "server version"))
+    monkeypatch.setattr("syncdb.cli.resolve_client", lambda *args: SimpleNamespace(kind="python", reason="test", client=None))
+    monkeypatch.setattr("syncdb.cli.confirm", lambda prompt: confirmations.append(prompt) or True)
+    monkeypatch.setattr("syncdb.cli.sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(
+        "syncdb.cli.run_python_sync",
+        lambda _config, table: attempted_tables.append(table) or TableResult(table=table, ok=True, engine="python", rows=1),
+    )
+
+    code = main(["--config", str(config), "sync", "--like", pattern, "--mode", "python"])
+
+    assert code == 0
+    assert attempted_tables == source_tables[:2]
+    assert len(confirmations) == 1
+    output = capsys.readouterr().out
+    assert "frequenciaBioV2_registros" in output
+    assert "frequenciaBioV2_usuarios" in output
+    assert "outra" not in output
+
+
+def test_sync_like_without_matches_stops_before_preflight_or_sync(monkeypatch, tmp_path, capsys):
+    config = tmp_path / "config" / "config.json"
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: ["unrelated"])
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not preflight when no tables match")))
+
+    code = main(["--config", str(config), "sync", "--like", "missing_%", "--mode", "python"])
+
+    assert code == 2
+    assert "Nenhuma tabela da origem corresponde" in capsys.readouterr().out
+
+
+def test_sync_like_requires_yes_confirmation_without_interactive_terminal(monkeypatch, tmp_path, capsys):
+    config = tmp_path / "config" / "config.json"
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: ["table_one"])
+    monkeypatch.setattr("syncdb.cli.sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not preflight before confirmation")))
+
+    code = main(["--config", str(config), "sync", "--like", "table_%", "--mode", "python"])
+
+    assert code == 2
+    assert "use --yes" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

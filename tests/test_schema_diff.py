@@ -245,6 +245,26 @@ def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path, caps
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in content
 
 
+def test_schema_diff_like_lists_only_matching_source_tables(monkeypatch, tmp_path, capsys):
+    config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
+    pattern = "frequenciaBioV2" + chr(92) + "_%"
+    source_tables = ["frequenciaBioV2_registros", "frequenciaBioV2_usuarios", "outra"]
+    inspected = []
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: source_tables)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: inspected.append(table) or (None, None))
+    monkeypatch.setattr("syncdb.cli.compare_schema", lambda source, target: type("Diff", (), {"source_exists": True, "target_exists": True})())
+    monkeypatch.setattr("syncdb.cli.print_schema_diff", lambda diff: None)
+    args = argparse.Namespace(schema_command="diff", tables=None, file=None, like=pattern, origin="prod", destination="local", verbose=False, sql_only=False, save=None)
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
+    assert inspected == source_tables[:2]
+    output = capsys.readouterr().out
+    assert "frequenciaBioV2_registros" in output
+    assert "frequenciaBioV2_usuarios" in output
+    assert "outra" not in output
+
+
 def test_interactive_schema_update_uses_simple_typed_confirmation_after_printed_plan(monkeypatch, tmp_path, capsys):
     source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
     target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
