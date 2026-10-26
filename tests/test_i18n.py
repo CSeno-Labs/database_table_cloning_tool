@@ -59,6 +59,7 @@ def test_english_sync_failure_output_is_fully_localized(monkeypatch, tmp_path, c
         "syncdb.cli.resolve_client",
         lambda *args, **kwargs: SimpleNamespace(kind="dump", reason="managed client available (mariadb).", client=object()),
     )
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (True, "test server"))
     monkeypatch.setattr("syncdb.cli.run_dump_sync", lambda *args: result)
     monkeypatch.setattr("syncdb.cli.write_sync_log", lambda *args, **kwargs: None)
 

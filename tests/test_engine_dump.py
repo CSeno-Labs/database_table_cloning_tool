@@ -234,6 +234,81 @@ def test_run_table_backup_uses_explicit_backup_name(monkeypatch):
     assert calls == [("periodo", "periodo_bkp")]
 
 
+def test_run_dump_sync_dumps_source_before_cleaning_destination(monkeypatch, tmp_path: Path):
+    import subprocess
+
+    from syncdb.engine import run_dump_sync
+    from syncdb.paths import AppPaths
+
+    client = DumpClient(ClientSource.MANAGED, "mariadb", tmp_path / "mariadb-dump", tmp_path / "mariadb")
+    paths = AppPaths.from_base(tmp_path / "app")
+    events = []
+
+    monkeypatch.setattr("syncdb.engine.table_exists", lambda *args: True)
+    monkeypatch.setattr("syncdb.engine._defaults_file", lambda config, tmpdir: tmpdir / f"{config['database']}.cnf")
+    monkeypatch.setattr("syncdb.engine.build_dump_command", lambda *args, **kwargs: ["dump"])
+    monkeypatch.setattr("syncdb.engine.build_import_command", lambda *args, **kwargs: ["import"])
+    monkeypatch.setattr("syncdb.engine.delete_existing_rows", lambda *args: events.append("cleanup_destination"))
+    monkeypatch.setattr("syncdb.engine.row_count", lambda *args: 1)
+
+    def fake_run(command, **kwargs):
+        events.append(command[0])
+        if command[0] == "dump":
+            kwargs["stdout"].write("CREATE TABLE `registros` (...);\n")
+        return subprocess.CompletedProcess(command, 0, stderr="")
+
+    monkeypatch.setattr("syncdb.engine.subprocess.run", fake_run)
+
+    result = run_dump_sync(
+        {
+            "origem": {"database": "source"},
+            "destino": {"database": "target"},
+            "sync": {"truncate_before_insert": True, "backup_before_replace": False},
+        },
+        "registros",
+        client,
+        paths,
+    )
+
+    assert result.ok is True
+    assert events == ["dump", "cleanup_destination", "import"]
+
+
+def test_run_dump_sync_does_not_clean_destination_when_source_dump_fails(monkeypatch, tmp_path: Path):
+    import subprocess
+
+    from syncdb.engine import run_dump_sync
+    from syncdb.paths import AppPaths
+
+    client = DumpClient(ClientSource.MANAGED, "mariadb", tmp_path / "mariadb-dump", tmp_path / "mariadb")
+    paths = AppPaths.from_base(tmp_path / "app")
+    cleaned = []
+
+    monkeypatch.setattr("syncdb.engine.table_exists", lambda *args: True)
+    monkeypatch.setattr("syncdb.engine._defaults_file", lambda config, tmpdir: tmpdir / f"{config['database']}.cnf")
+    monkeypatch.setattr("syncdb.engine.build_dump_command", lambda *args, **kwargs: ["dump"])
+    monkeypatch.setattr("syncdb.engine.delete_existing_rows", lambda *args: cleaned.append(True))
+    monkeypatch.setattr(
+        "syncdb.engine.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 1, stderr="2002 connection timeout"),
+    )
+
+    result = run_dump_sync(
+        {
+            "origem": {"database": "source"},
+            "destino": {"database": "target"},
+            "sync": {"truncate_before_insert": True},
+        },
+        "registros",
+        client,
+        paths,
+    )
+
+    assert result.ok is False
+    assert result.stage == "dump_source"
+    assert cleaned == []
+
+
 def test_run_dump_sync_returns_compact_import_error_and_preserves_full_stderr(monkeypatch, tmp_path: Path):
     import subprocess
 

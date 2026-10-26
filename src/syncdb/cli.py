@@ -19,7 +19,7 @@ from rich.text import Text
 from .clients import find_managed_client, find_system_client, resolve_client
 from .config import ConfigError, ensure_config, load_config, profile_tag, redact_config, resolve_profile_pair, save_config, sync_runtime_config
 from .db import test_connection
-from .engine import drop_table, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
+from .engine import TableResult, drop_table, is_source_connection_failure, normalize_where_clause, preflight_advanced_sync, run_dump_sync, run_python_advanced_sync, run_python_sync, run_table_backup
 from .interactive import MenuOption, read_key, read_text_or_back, select_option
 from .i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, get_language, normalize_language, set_language, t
 from .managed_client import ManagedClientError, install_managed_client, resolve_default_package
@@ -30,6 +30,7 @@ from .update_check import check_for_update
 
 console = Console()
 APP_VERSION = "3.0.3"
+SYNC_PREFLIGHT_TIMEOUT_SECONDS = 5
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
 
@@ -563,11 +564,33 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
         write_sync_log(paths, runtime_config, tables, resolved.kind, [], sync_type="dry_run")
         return 0
 
+    for role in ("origem", "destino"):
+        profile = runtime_config[role]
+        connected, message = test_connection(
+            profile,
+            connection_timeout=SYNC_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+        if not connected:
+            stage = "preflight_source" if role == "origem" else "preflight_destination"
+            failure = TableResult(
+                table=tables[0],
+                ok=False,
+                engine=resolved.kind,
+                message=t("engine.stage_failed_prefix", stage=stage, table=tables[0]) + message,
+                details=message,
+                stage=stage,
+            )
+            console.print(t("sync.preflight.failed", tag=profile.get("alias", role), count=len(tables)))
+            print_sync_summary([failure])
+            write_sync_log(paths, runtime_config, tables, resolved.kind, [failure])
+            print_sync_errors([failure], paths.log_file)
+            return 1
+
     results = []
     progress_cm = sync_progress(len(tables)) if sys.stdin.isatty() else nullcontext(None)
     with progress_cm as progress:
         task_id = progress.add_task(t("menu.sync.title"), total=len(tables)) if progress else None
-        for table in tables:
+        for index, table in enumerate(tables):
             console.print(f"\n[bold cyan]{t('sync.progress', table=table)}[/]")
             if progress and task_id is not None:
                 progress.update(task_id, description=t("sync.progress", table=table))
@@ -588,6 +611,12 @@ def cmd_sync(paths: AppPaths, args: argparse.Namespace) -> int:
             if result.ok:
                 extra = f" backup={result.backup_table}" if result.backup_table else ""
                 console.print(t("sync.success", table=table, engine=result.engine, rows="" if result.rows is None else result.rows, extra=extra))
+            if is_source_connection_failure(result):
+                unprocessed = len(tables) - index - 1
+                if unprocessed:
+                    key = "sync.stopped_source_connection.one" if unprocessed == 1 else "sync.stopped_source_connection.many"
+                    console.print(t(key, count=unprocessed))
+                break
 
     cleanup_temporary_backups(runtime_config, backup_mode, results)
 
