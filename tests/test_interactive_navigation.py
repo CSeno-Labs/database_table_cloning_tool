@@ -119,6 +119,20 @@ def test_terminal_escape_sequences_map_home_end_delete_and_ctrl_arrows():
     assert decode_ansi_key("[1;5C") == "ctrl_right"
 
 
+def test_table_selection_context_highlights_databases_and_adds_like_hint():
+    from syncdb.cli import table_selection_context
+
+    context = table_selection_context("local", "localhost")
+    styled = [(context.plain[span.start:span.end], str(span.style)) for span in context.spans]
+
+    assert "local" in context.plain
+    assert "localhost" in context.plain
+    assert "--like" in context.plain and "%" in context.plain and "_" in context.plain and "*" in context.plain
+    assert ("local", "bold yellow") in styled
+    assert ("localhost", "bold yellow") in styled
+    assert any(text.startswith("Dica:") and style == "grey70" for text, style in styled)
+
+
 def test_sync_context_text_matches_step_labels():
     from syncdb.cli import format_sync_context
 

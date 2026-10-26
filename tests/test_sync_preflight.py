@@ -47,6 +47,8 @@ def test_interactive_sync_does_not_repeat_pattern_matches_in_summary_or_confirma
     assert output.count(tables[1]) == 1
     assert "Selected tables:" not in output
     assert "local → localhost" in output
+    assert "--like" in output and "%" in output and "_" in output and "*" in output
+    assert "Tip:" in output or "Dica:" in output
 
 
 def test_sync_like_lists_source_matches_and_requires_confirmation(monkeypatch, tmp_path, capsys):

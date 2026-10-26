@@ -1618,6 +1618,20 @@ def interactive_language(paths: AppPaths) -> int:
     return 0
 
 
+def table_selection_context(origin: str, destination: str) -> Text:
+    body = Text()
+    body.append(t("menu.context.origin", origin=""), style="dim")
+    body.append(origin, style="bold yellow")
+    body.append("\n")
+    body.append(t("menu.context.destination", destination=""), style="dim")
+    body.append(destination, style="bold yellow")
+    body.append("\n")
+    body.append(t("menu.step.tables"))
+    body.append("\n")
+    body.append(t("menu.table_prompt.like_hint"), style="grey70")
+    return body
+
+
 def format_sync_context(*, origin: str = "", destination: str = "", tables: list[str] | None = None, mode: str = "", step: str = "") -> str:
     lines: list[str] = []
     if origin:
@@ -2022,7 +2036,7 @@ def interactive_sync(paths: AppPaths) -> int:
     if table_source == "last":
         tables = last
     else:
-        console.print(Panel(format_sync_context(origin=origin, destination=destination, step="tables"), title=t("menu.sync.title"), border_style="cyan"))
+        console.print(Panel(table_selection_context(origin, destination), title=t("menu.sync.title"), border_style="cyan"))
         tables = read_table_selection_input(config["profiles"][origin])
         if tables is None:
             return MENU_BACK

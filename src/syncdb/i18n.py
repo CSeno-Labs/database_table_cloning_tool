@@ -387,6 +387,14 @@ CATALOG["en"].update({
 })
 
 
+CATALOG["pt-BR"].update({
+    "menu.table_prompt.like_hint": "Dica: use --like com os curingas %, _ e * para filtrar tabelas.",
+})
+CATALOG["en"].update({
+    "menu.table_prompt.like_hint": "Tip: use --like with the %, _, and * wildcards to filter tables.",
+})
+
+
 def normalize_language(value: object) -> str:
     if isinstance(value, str) and value.lower() in {"pt", "pt-br", "pt_br"}:
         return "pt-BR"
