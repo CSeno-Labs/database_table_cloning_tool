@@ -23,6 +23,7 @@ def test_all_table_schema_commands_accept_like():
 
     for command in commands:
         assert parser.parse_args(command).like == "x_%"
+    assert parser.parse_args(["schema", "plan", "update", "-t", "orders", "--yes"]).yes is True
 
 
 def test_sync_mode_help_lists_specific_dump_sources(capsys):

@@ -129,6 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--no-sql", action="store_true", help=t("help.no_sql"))
     plan.add_argument("--sql-only", action="store_true", help=t("help.sql_only"))
     plan.add_argument("--save", metavar="FILE.sql", help=t("help.save"))
+    plan.add_argument("-y", "--yes", action="store_true", help=t("help.yes_schema_plan"))
     for name, help_text in (
         ("diff", t("help.schema.diff")),
         ("copy", t("help.schema.copy")),
@@ -840,12 +841,28 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
         except Exception as exc:  # noqa: BLE001 - read-only source catalog lookup
             console.print(f"[red]{t('error')}[/] {exc}")
             return 2
-        print_like_matches(like_pattern, tables)
     else:
         tables = collect_tables(args, config)
     if not tables:
         console.print(f"[red]{t('error')}[/] {t('sync.no_tables_basic')}")
         return 2
+
+    if action == SchemaAction.UPDATE:
+        if like_pattern is not None:
+            console.print(t("tables.like.matches", pattern=like_pattern, count=len(tables)))
+        else:
+            console.print(t("schema.update.selection.title", count=len(tables)))
+        for table in tables:
+            console.print(f"  • {table}")
+        if not getattr(args, "yes", False):
+            if not sys.stdin.isatty():
+                console.print(f"[red]{t('error')}[/] {t('schema.update.selection.confirm_required')}")
+                return 2
+            if not confirm(t("schema.update.selection.confirm")):
+                console.print(t("prompt.cancelled_no_changes"))
+                return 0
+    elif like_pattern is not None:
+        print_like_matches(like_pattern, tables)
 
     if sub != "plan" and action in {SchemaAction.COPY, SchemaAction.UPDATE} and not getattr(args, "yes", False) and not getattr(args, "interactive", False) and not sys.stdin.isatty():
         console.print(f"[red]{t('error')}[/] {t('schema.noninteractive_copy')}")
@@ -858,7 +875,8 @@ def cmd_schema(paths: AppPaths, args: argparse.Namespace) -> int:
     if not sql_only and not getattr(args, "save", None):
         console.print(t("schema.model", origin=origin["alias"]))
         console.print(t("schema.target", destination=destination["alias"]))
-        console.print(t("schema.tables", tables=", ".join(tables)))
+        if action != SchemaAction.UPDATE:
+            console.print(t("schema.tables", tables=", ".join(tables)))
 
     if action == SchemaAction.DIFF:
         results = []
@@ -2004,9 +2022,9 @@ def interactive_sync(paths: AppPaths) -> int:
         if not tables:
             console.print(f"[red]{t('error')}[/] {t('menu.no_table')}")
             return 2
-    console.print(Panel(format_sync_context(origin=origin, destination=destination, tables=tables, mode="auto"), title=t("menu.sync.summary"), border_style="cyan"))
+    console.print(Panel(format_sync_context(origin=origin, destination=destination, mode="auto"), title=t("menu.sync.summary"), border_style="cyan"))
     backup = "none"
-    console.print(f"{t('prompt.confirm')}: {origin} → {destination} | {', '.join(tables)} | mode=auto")
+    console.print(f"{t('prompt.confirm')}: {origin} → {destination}")
     if not confirm(t("prompt.confirm")):
         return 1
     return cmd_sync(paths, argparse.Namespace(tables=tables, file=None, origin=origin, destination=destination, last=False, mode="auto", backup=backup, where=None, insert_missing=False, yes=False))

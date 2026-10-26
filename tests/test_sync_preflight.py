@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from syncdb.cli import main, read_table_selection_input
+from syncdb.cli import main, interactive_sync, read_table_selection_input
 from syncdb.engine import TableResult
 
 
@@ -19,6 +19,34 @@ def test_interactive_table_input_resolves_quoted_like_pattern(monkeypatch, capsy
 
     assert tables == ["frequenciaBioV2_registros", "frequenciaBioV2_usuarios"]
     assert "frequenciaBioV2_usuarios" in capsys.readouterr().out
+
+
+def test_interactive_sync_does_not_repeat_pattern_matches_in_summary_or_confirmation(monkeypatch, tmp_path, capsys):
+    from syncdb.paths import AppPaths
+
+    config = {
+        "language": "pt-BR",
+        "profiles": {"local": {"host": "source"}, "localhost": {"host": "destination"}},
+        "defaults": {"origin": "local", "destination": "localhost"},
+    }
+    pattern = "frequenciaBioV2" + chr(92) + "_*"
+    tables = ["frequenciaBioV2_registros", "frequenciaBioV2_usuarios"]
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.read_last_tables", lambda paths, config: [])
+    choices = iter(["local", "localhost"])
+    monkeypatch.setattr("syncdb.cli.choose_profile", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr("syncdb.cli.read_text_or_back", lambda prompt: "--like " + chr(34) + pattern + chr(34))
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: tables)
+    monkeypatch.setattr("syncdb.cli.confirm", lambda prompt: True)
+    monkeypatch.setattr("syncdb.cli.cmd_sync", lambda *args, **kwargs: 0)
+
+    assert interactive_sync(AppPaths.from_base(tmp_path)) == 0
+    output = capsys.readouterr().out
+
+    assert output.count(tables[0]) == 1
+    assert output.count(tables[1]) == 1
+    assert "Selected tables:" not in output
+    assert "local → localhost" in output
 
 
 def test_sync_like_lists_source_matches_and_requires_confirmation(monkeypatch, tmp_path, capsys):
