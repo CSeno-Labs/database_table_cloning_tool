@@ -29,7 +29,7 @@ from .tables import expand_table_pattern, parse_table_selection_input, parse_tab
 from .update_check import check_for_update
 
 console = Console()
-APP_VERSION = "3.0.3"
+APP_VERSION = "3.1.0"
 SYNC_PREFLIGHT_TIMEOUT_SECONDS = 5
 MENU_BACK = -1000
 PROJECT_REPO_URL = "https://github.com/CSeno-Labs/database_table_cloning_tool.git"
