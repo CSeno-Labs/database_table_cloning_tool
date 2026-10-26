@@ -1620,13 +1620,13 @@ def interactive_language(paths: AppPaths) -> int:
 
 def table_selection_context(origin: str, destination: str) -> Text:
     body = Text()
-    body.append(t("menu.context.origin", origin=""), style="dim")
+    body.append(t("menu.context.origin", origin=""), style="white")
     body.append(origin, style="bold yellow")
     body.append("\n")
-    body.append(t("menu.context.destination", destination=""), style="dim")
+    body.append(t("menu.context.destination", destination=""), style="white")
     body.append(destination, style="bold yellow")
     body.append("\n")
-    body.append(t("menu.step.tables"))
+    body.append(t("menu.step.tables"), style="grey70")
     body.append("\n")
     body.append(t("menu.table_prompt.like_hint"), style="grey70")
     return body

@@ -130,6 +130,9 @@ def test_table_selection_context_highlights_databases_and_adds_like_hint():
     assert "--like" in context.plain and "%" in context.plain and "_" in context.plain and "*" in context.plain
     assert ("local", "bold yellow") in styled
     assert ("localhost", "bold yellow") in styled
+    assert ("Origem escolhida: ", "white") in styled
+    assert ("Destino escolhido: ", "white") in styled
+    assert ("Escolha as tabelas que serão sincronizadas", "grey70") in styled
     assert any(text.startswith("Dica:") and style == "grey70" for text, style in styled)
 
 
