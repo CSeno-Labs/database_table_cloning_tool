@@ -50,6 +50,7 @@ def test_interactive_schema_offers_manual_selection_without_cli_action(monkeypat
         "defaults": {"origin": "prod", "destination": "local"},
     })
     monkeypatch.setattr("syncdb.cli.choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr("syncdb.cli.confirm", lambda question: True)
     monkeypatch.setattr("builtins.input", lambda prompt="": "aluno")
 
     def fake_select(title, options, **kwargs):
@@ -84,6 +85,7 @@ def test_interactive_manual_selects_only_one_operation_and_executes_it(monkeypat
         "defaults": {"origin": "prod", "destination": "local"},
     })
     monkeypatch.setattr("syncdb.cli.choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr("syncdb.cli.confirm", lambda question: True)
     monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda *args: (SchemaSnapshot("aluno", True), SchemaSnapshot("aluno", True)))
     monkeypatch.setattr("syncdb.cli.compare_schema", lambda *args: object())
@@ -116,6 +118,7 @@ def test_interactive_manual_keeps_cursor_on_toggled_long_list_operation(monkeypa
         "defaults": {"origin": "prod", "destination": "local"},
     })
     monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr(cli, "confirm", lambda question: True)
     monkeypatch.setattr("builtins.input", lambda prompt="": "aluno" if prompt == "Tabelas: " else "aplicar")
     monkeypatch.setattr(cli, "inspect_schema_pair", lambda *args: (SchemaSnapshot("aluno", True), SchemaSnapshot("aluno", True)))
     monkeypatch.setattr(cli, "compare_schema", lambda *args: object())
@@ -147,6 +150,7 @@ def test_interactive_manual_copy_offers_removal_operations(monkeypatch, tmp_path
         "defaults": {"origin": "prod", "destination": "local"},
     })
     monkeypatch.setattr("syncdb.cli.choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr("syncdb.cli.confirm", lambda question: True)
     monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda *args: (SchemaSnapshot("aluno", True), SchemaSnapshot("aluno", True)))
     monkeypatch.setattr("syncdb.cli.compare_schema", lambda *args: object())
@@ -179,6 +183,7 @@ def test_interactive_schema_copy_applies_then_keeps_selected_context(monkeypatch
         "defaults": {"origin": "prod", "destination": "local"},
     })
     monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: profile_choices.append((title, default)) or default)
+    monkeypatch.setattr(cli, "confirm", lambda question: True)
     monkeypatch.setattr("builtins.input", lambda prompt="": "aluno")
     monkeypatch.setattr(cli, "pause_after_action", lambda: None)
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
@@ -215,6 +220,7 @@ def test_interactive_schema_reselects_only_tables_without_rechoosing_profiles(mo
         "defaults": {"origin": "prod", "destination": "local"},
     })
     monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: profile_choices.append((title, default)) or default)
+    monkeypatch.setattr(cli, "confirm", lambda question: True)
 
     def input_value(prompt=""):
         prompts.append(prompt)
@@ -248,6 +254,7 @@ def test_interactive_schema_back_opens_table_selection(monkeypatch, tmp_path):
         "defaults": {"origin": "prod", "destination": "local"},
     })
     monkeypatch.setattr(cli, "choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr(cli, "confirm", lambda question: True)
 
     def input_value(prompt=""):
         prompts.append(prompt)

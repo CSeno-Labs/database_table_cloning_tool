@@ -181,7 +181,7 @@ def test_schema_plan_sql_flags_control_visual_and_sql_output(monkeypatch, tmp_pa
     }
     monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
-    base = dict(schema_command="plan", plan_action="update", tables=["aluno"], file=None, origin="prod", destination="local")
+    base = dict(schema_command="plan", plan_action="update", tables=["aluno"], file=None, origin="prod", destination="local", yes=True)
 
     assert cmd_schema(AppPaths.from_base(tmp_path), argparse.Namespace(**base, sql=False, no_sql=False, sql_only=False)) == 0
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in capsys.readouterr().out
@@ -234,7 +234,7 @@ def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path, caps
     monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
     output = tmp_path / "plano.sql"
-    args = argparse.Namespace(schema_command="plan", plan_action="update", tables=["aluno"], file=None, origin="prod", destination="local", sql=False, no_sql=False, sql_only=False, save=str(output))
+    args = argparse.Namespace(schema_command="plan", plan_action="update", tables=["aluno"], file=None, origin="prod", destination="local", yes=True, sql=False, no_sql=False, sql_only=False, save=str(output))
 
     assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
     shown = capsys.readouterr().out
@@ -245,6 +245,65 @@ def test_schema_plan_save_writes_documented_sql_file(monkeypatch, tmp_path, caps
     assert "ALTER TABLE `aluno` ADD COLUMN `novo` INT NULL AFTER `id`;" in content
 
 
+def test_schema_diff_like_lists_only_matching_source_tables(monkeypatch, tmp_path, capsys):
+    config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
+    pattern = "frequenciaBioV2" + chr(92) + "_%"
+    source_tables = ["frequenciaBioV2_registros", "frequenciaBioV2_usuarios", "outra"]
+    inspected = []
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: source_tables)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: inspected.append(table) or (None, None))
+    monkeypatch.setattr("syncdb.cli.compare_schema", lambda source, target: type("Diff", (), {"source_exists": True, "target_exists": True})())
+    monkeypatch.setattr("syncdb.cli.print_schema_diff", lambda diff: None)
+    args = argparse.Namespace(schema_command="diff", tables=None, file=None, like=pattern, origin="prod", destination="local", verbose=False, sql_only=False, save=None)
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
+    assert inspected == source_tables[:2]
+    output = capsys.readouterr().out
+    assert "frequenciaBioV2_registros" in output
+    assert "frequenciaBioV2_usuarios" in output
+    assert "outra" not in output
+
+
+def test_schema_update_plan_confirms_selected_tables_before_inspection(monkeypatch, tmp_path, capsys):
+    config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
+    events = []
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: events.append("catalog") or ["aluno", "aluno_extra", "outro"])
+    monkeypatch.setattr("syncdb.cli.sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("syncdb.cli.confirm", lambda prompt: events.append("confirm") or True)
+    monkeypatch.setattr(
+        "syncdb.cli.inspect_schema_pair",
+        lambda origin, destination, table: events.append("inspect:" + table)
+        or (snapshot(table, columns=(("id", "int", "NO", None, "", None, 1),)), snapshot(table, columns=(("id", "int", "NO", None, "", None, 1),))),
+    )
+    monkeypatch.setattr("syncdb.cli.print_schema_plan", lambda plan, **kwargs: None)
+    args = argparse.Namespace(schema_command="plan", plan_action="update", tables=None, file=None, like="aluno%", origin="prod", destination="local", yes=False, sql=False, no_sql=False, sql_only=False, save=None)
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
+    assert events == ["catalog", "confirm", "inspect:aluno", "inspect:aluno_extra"]
+    output = capsys.readouterr().out
+    assert "aluno_extra" in output
+    assert "outro" not in output
+
+
+def test_schema_update_plan_cancellation_does_not_inspect_tables(monkeypatch, tmp_path, capsys):
+    config = {"profiles": {"prod": {"host": "prod", "database": "db", "allow_as_origin": True}, "local": {"host": "local", "database": "db", "allow_as_destination": True}}, "defaults": {"origin": "prod", "destination": "local"}}
+    events = []
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.list_table_names", lambda profile, **kwargs: ["aluno", "aluno_extra"])
+    monkeypatch.setattr("syncdb.cli.sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("syncdb.cli.confirm", lambda prompt: events.append("confirm") or False)
+    monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda *args: events.append("inspect") or (_ for _ in ()).throw(AssertionError("inspection must wait for confirmation")))
+    args = argparse.Namespace(schema_command="plan", plan_action="update", tables=None, file=None, like="aluno%", origin="prod", destination="local", yes=False, sql=False, no_sql=False, sql_only=False, save=None)
+
+    assert cmd_schema(AppPaths.from_base(tmp_path), args) == 0
+    assert events == ["confirm"]
+    output = capsys.readouterr().out
+    assert "aluno_extra" in output
+    assert "Modelo de estrutura" not in output
+
+
 def test_interactive_schema_update_uses_simple_typed_confirmation_after_printed_plan(monkeypatch, tmp_path, capsys):
     source = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1), ("novo", "int", "YES", None, "", None, 2)))
     target = snapshot("aluno", columns=(("id", "int", "NO", None, "", None, 1),))
@@ -253,6 +312,8 @@ def test_interactive_schema_update_uses_simple_typed_confirmation_after_printed_
     prompts = []
     monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
     monkeypatch.setattr("syncdb.cli.inspect_schema_pair", lambda origin, destination, table: (source, target))
+    monkeypatch.setattr("syncdb.cli.sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("syncdb.cli.confirm", lambda question: True)
     monkeypatch.setattr("syncdb.cli.select_option", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("interactive confirmation must not open a Live menu")))
     answers = iter(("a", "aplicar"))
     monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or next(answers))

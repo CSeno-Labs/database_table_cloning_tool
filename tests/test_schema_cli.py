@@ -83,6 +83,48 @@ def test_main_menu_has_schema_option_before_backup(monkeypatch, tmp_path):
     assert choices_seen.index("Estrutura das tabelas") < choices_seen.index("Backup de tabelas")
 
 
+def test_interactive_schema_confirms_table_selection_before_showing_structure_menu(monkeypatch, tmp_path, capsys):
+    from syncdb.cli import interactive_schema
+    from syncdb.cli import MENU_BACK
+
+    events = []
+    config = {
+        "profiles": {"prod": {"host": "prod", "database": "db"}, "local": {"host": "local", "database": "db"}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    }
+    selections = iter([["aluno", "aluno_extra"], None])
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr("syncdb.cli.read_table_selection_input", lambda *args, **kwargs: events.append("tables") or next(selections))
+    monkeypatch.setattr("syncdb.cli.confirm", lambda prompt: events.append("confirm") or False)
+    monkeypatch.setattr("syncdb.cli.select_option", lambda *args, **kwargs: events.append("menu") or "main_menu")
+
+    assert interactive_schema(app_paths(tmp_path)) == MENU_BACK
+    assert events == ["tables", "confirm", "tables"]
+    output = capsys.readouterr().out
+    assert "aluno" in output
+    assert "aluno_extra" in output
+
+
+def test_interactive_schema_confirms_tables_before_action_menu(monkeypatch, tmp_path):
+    from syncdb.cli import interactive_schema
+    from syncdb.cli import MENU_BACK
+
+    events = []
+    config = {
+        "profiles": {"prod": {"host": "prod", "database": "db"}, "local": {"host": "local", "database": "db"}},
+        "defaults": {"origin": "prod", "destination": "local"},
+    }
+    monkeypatch.setattr("syncdb.cli.load_config", lambda paths: config)
+    monkeypatch.setattr("syncdb.cli.choose_profile", lambda config, title, default, **kwargs: default)
+    monkeypatch.setattr("syncdb.cli.read_table_selection_input", lambda *args, **kwargs: events.append("tables") or ["aluno"])
+    monkeypatch.setattr("syncdb.cli.confirm", lambda prompt: events.append("confirm") or True)
+    monkeypatch.setattr("syncdb.cli.select_option", lambda *args, **kwargs: events.append("menu") or "main_menu")
+
+    assert interactive_schema(app_paths(tmp_path)) == MENU_BACK
+    assert events == ["tables", "confirm", "menu"]
+
+
 def test_interactive_sync_no_longer_prompts_for_backup(monkeypatch, tmp_path):
     from syncdb.config import ensure_config
     from syncdb.cli import interactive_sync

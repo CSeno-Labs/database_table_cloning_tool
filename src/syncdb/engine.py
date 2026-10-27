@@ -36,6 +36,14 @@ class TableResult:
     details: str = ""
 
 
+def is_source_connection_failure(result: TableResult) -> bool:
+    """Identify source connection/authentication failures that make later tables futile."""
+    if result.ok or result.stage != "dump_source":
+        return False
+    details = f"{result.message} {result.details}"
+    return bool(re.search(r"\b(?:2002|2003|1044|1045|1130)\b|\b10060\b", details, re.IGNORECASE))
+
+
 def summarize_dump_error(error: str, *, limit: int = 500) -> str:
     """Return a compact diagnostic, preferring the database client's error line."""
     lines = [line.strip() for line in error.splitlines() if line.strip()]
@@ -396,12 +404,6 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
     try:
         stage = "check_dest"
         needs_creation = not table_exists(destino, table)
-        if not needs_creation and sync_cfg.get("backup_before_replace"):
-            stage = "backup_dest"
-            backup_table = backup_existing_table(destino, table)
-        if not needs_creation and sync_cfg.get("truncate_before_insert", True):
-            stage = "cleanup_dest"
-            delete_existing_rows(destino, table)
         stage = "dump_source"
         dump_cmd = build_dump_command(client, src_defaults, database=origem["database"], table=table, include_create=needs_creation)
         with sql_path.open("w", encoding="utf-8") as out:
@@ -410,6 +412,13 @@ def run_dump_sync(config: dict[str, Any], table: str, client: DumpClient, paths:
             if proc.returncode != 0:
                 raise SyncError(t("engine.dump_failed", table=table, error=proc.stderr.strip()))
             out.write("\nSET FOREIGN_KEY_CHECKS=1;\n")
+
+        if not needs_creation and sync_cfg.get("backup_before_replace"):
+            stage = "backup_dest"
+            backup_table = backup_existing_table(destino, table)
+        if not needs_creation and sync_cfg.get("truncate_before_insert", True):
+            stage = "cleanup_dest"
+            delete_existing_rows(destino, table)
 
         stage = "import_dest"
         import_cmd = build_import_command(client, dst_defaults, database=destino["database"])

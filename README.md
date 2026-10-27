@@ -1,4 +1,4 @@
-# sync-db 3.0.0
+# sync-db 3.1.0
 
 CLI para sincronizar dados e estrutura de tabelas MySQL/MariaDB entre ambientes, com foco em instalação simples, operações explícitas e diagnóstico claro.
 

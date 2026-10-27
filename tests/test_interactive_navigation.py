@@ -62,10 +62,78 @@ def test_table_input_escape_returns_no_selection(monkeypatch):
     assert read_tables_input() is None
 
 
+def test_read_text_or_back_left_arrow_moves_cursor_instead_of_returning_to_menu(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter(["a", "c", "left", "b", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "abc"
+
+
+def test_read_text_or_back_right_arrow_moves_cursor_forward(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter(["a", "left", "right", "b", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "ab"
+
+
 def test_read_text_or_back_returns_none_immediately_on_escape(monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     assert read_text_or_back("Tabelas: ", key_reader=lambda: "escape") is None
+
+
+def test_read_text_or_back_home_end_and_ctrl_arrows_edit_by_word(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter([*"--like alpha_beta", "ctrl_left", "!", "home", "end", "?", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "--like !alpha_beta?"
+
+
+def test_read_text_or_back_supports_home_end_and_delete(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    keys = iter(["a", "b", "c", "home", "delete", "end", "delete", "enter"])
+
+    assert read_text_or_back("Tabelas: ", key_reader=lambda: next(keys)) == "bc"
+
+
+def test_table_selection_input_styles_like_token_and_wildcards():
+    from syncdb.interactive import editable_input_text
+
+    rendered = editable_input_text(r'--like "frequenciaBioV2\_%*"')
+    spans = [(span.start, span.end, span.style) for span in rendered.spans]
+
+    assert rendered.plain == r'--like "frequenciaBioV2\_%*"'
+    assert any(start == 0 and end == 6 and style for start, end, style in spans)
+    styled_wildcards = [rendered.plain[start:end] for start, end, style in spans if style == "bold magenta"]
+    assert styled_wildcards == ["%", "*"]
+    assert sum(1 for _, _, style in spans if style == "bold cyan") == 1
+
+
+def test_terminal_escape_sequences_map_home_end_delete_and_ctrl_arrows():
+    from syncdb.interactive import decode_ansi_key
+
+    assert decode_ansi_key("[H") == "home"
+    assert decode_ansi_key("[F") == "end"
+    assert decode_ansi_key("[3~") == "delete"
+    assert decode_ansi_key("[1;5D") == "ctrl_left"
+    assert decode_ansi_key("[1;5C") == "ctrl_right"
+
+
+def test_table_selection_context_highlights_databases_and_adds_like_hint():
+    from syncdb.cli import table_selection_context
+
+    context = table_selection_context("local", "localhost")
+    styled = [(context.plain[span.start:span.end], str(span.style)) for span in context.spans]
+
+    assert "local" in context.plain
+    assert "localhost" in context.plain
+    assert "--like" in context.plain and "%" in context.plain and "_" in context.plain and "*" in context.plain
+    assert ("local", "bold yellow") in styled
+    assert ("localhost", "bold yellow") in styled
+    assert ("Origem escolhida: ", "white") in styled
+    assert ("Destino escolhido: ", "white") in styled
+    assert ("Escolha as tabelas que serão sincronizadas", "grey70") in styled
+    assert any(text.startswith("Dica:") and style == "grey70" for text, style in styled)
 
 
 def test_sync_context_text_matches_step_labels():

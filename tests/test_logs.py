@@ -33,6 +33,7 @@ def test_failed_table_marks_progress_task_as_failed(monkeypatch, tmp_path: Path)
     )
 
     config = tmp_path / "config" / "config.json"
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (True, "test server"))
     monkeypatch.setattr("syncdb.cli.sys.stdin", SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr("syncdb.cli.resolve_client", lambda *args, **kwargs: SimpleNamespace(kind="python", client=None, reason="test"))
     monkeypatch.setattr("syncdb.cli.run_python_sync", lambda *args: result)
@@ -60,6 +61,7 @@ def test_sync_writes_log_file_for_failed_run(monkeypatch, tmp_path: Path, capsys
             details="full diagnostic payload",
         )
 
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (True, "test server"))
     monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
 
     code = main(["--config", str(config), "sync", "-t", "periodo", "--mode", "python"])

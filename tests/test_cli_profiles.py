@@ -1,6 +1,13 @@
 from pathlib import Path
 
+import pytest
+
 from syncdb.cli import main
+
+
+@pytest.fixture(autouse=True)
+def successful_sync_preflight(monkeypatch):
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (True, "test server"))
 
 
 def test_db_add_interactively_saves_profile(monkeypatch, tmp_path: Path, capsys):

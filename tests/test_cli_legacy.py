@@ -13,6 +13,7 @@ def test_legacy_tables_option_syncs_without_subcommand(monkeypatch, tmp_path: Pa
 
         return TableResult(table=table, ok=True, engine="python", rows=1)
 
+    monkeypatch.setattr("syncdb.cli.test_connection", lambda *args, **kwargs: (True, "test server"))
     monkeypatch.setattr("syncdb.cli.run_python_sync", fake_run_python_sync)
 
     code = main(["--config", str(config), "-t", "periodo", "aluno", "--mode", "python"])
